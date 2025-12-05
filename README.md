@@ -11,7 +11,7 @@ Sarathi-Serve has been tested with CUDA 12.3 on H100 and A100 GPUs.
 ### Clone repository
 
 ```sh
-git clone git@github.com:microsoft/sarathi-serve.git
+git clone https://github.com/Charmstok/sarathi-serve.git
 ```
 
 ### Create mamba environment
@@ -23,7 +23,7 @@ wget https://github.com/conda-forge/miniforge/releases/latest/download/Mambaforg
 bash Mambaforge-Linux-x86_64.sh # follow the instructions from there
 ```
 
-Create a Python 3.10 environment,
+Create a Python 3.11 environment,
 
 ```sh
 mamba create -p ./env python=3.11  

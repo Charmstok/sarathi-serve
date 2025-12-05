@@ -1,11 +1,14 @@
 import datetime
 from tqdm import tqdm
 from typing import List
+import os
 
-from sarathi.config import ModelConfig, ParallelConfig, SarathiSchedulerConfig, MetricsConfig, SystemConfig, ReplicaConfig
+from sarathi.config import ModelConfig, ParallelConfig, MetricsConfig, SystemConfig, \
+    ReplicaConfig, OptSarathiSchedulerConfig
 from sarathi import LLMEngine, SamplingParams, RequestOutput
 
-
+os.environ['HF_ENDPOINT'] = "https://hf-mirror.com"
+os.environ['no_proxy'] = "localhost,127.0.0.1,::1"
 BASE_OUTPUT_DIR = "./offline_inference_output"
 
 # Sample prompts.
@@ -30,15 +33,15 @@ replica_config = ReplicaConfig(
 )
 
 model_config = ModelConfig(
-    model="mistralai/Mixtral-8x7B-Instruct-v0.1",
+    model="Qwen/Qwen-7B",
 )
 
 parallel_config = ParallelConfig(
     tensor_parallel_size=1,
-    pipeline_parallel_size=4,
+    pipeline_parallel_size=1,
 )
 
-scheduler_config = SarathiSchedulerConfig(
+scheduler_config = OptSarathiSchedulerConfig(
     chunk_size=100,
     max_num_seqs=10,
 )
