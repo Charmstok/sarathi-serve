@@ -35,7 +35,7 @@ class OptSarathiScheduler(BaseScheduler):
         self.enable_dynamic_chunking_schedule = (
             self.scheduler_config.enable_dynamic_chunking_schedule
         )
-        # next four params apply only when using dynamic schedule
+        # 以下参数仅在动态分块模式下生效
         self.low_chunk_size = self.scheduler_config.low_chunk_size
         self.high_chunk_size = self.scheduler_config.high_chunk_size
         self.chunk_schedule_max_tokens = self.scheduler_config.chunk_schedule_max_tokens
@@ -52,7 +52,7 @@ class OptSarathiScheduler(BaseScheduler):
             )
 
     def _compute_chunk_size_schedule(self):
-        # create num_steps equally spaced chunk sizes between low_chunk_size and high_chunk_size
+        # 使用 numpy 生成等差数列（ between low_chunk_size and high_chunk_size）
         chunk_sizes = np.linspace(
             self.low_chunk_size,
             self.high_chunk_size,
@@ -71,11 +71,13 @@ class OptSarathiScheduler(BaseScheduler):
     def get_block_space_manager_class(self):
         return SarathiBlockSpaceManager
 
+    # 计算当前请求在本轮迭代中应该运行多少个 token
     def _get_seq_next_num_prefill_tokens(
         self, seq: Sequence, num_batched_tokens: int
     ) -> int:
         assert not seq.is_finished()
 
+        # 动态 chunk_size 模式
         if self.enable_dynamic_chunking_schedule:
             request_stage_idx = int(
                 np.ceil(
@@ -85,18 +87,19 @@ class OptSarathiScheduler(BaseScheduler):
             )
             assert request_stage_idx < len(self._chunk_sizes)
             chunk_size = self._chunk_sizes[request_stage_idx]
+        # 静态 chunk_size 模式
         else:
             chunk_size = self.chunk_size
 
         next_num_tokens = min(
-            seq.get_prompt_len() - seq.get_num_prompt_tokens_stage_processed(),
-            chunk_size - num_batched_tokens,
+            seq.get_prompt_len() - seq.get_num_prompt_tokens_stage_processed(), # 剩余 prompt 长度
+            chunk_size - num_batched_tokens,                                    # 剩余 budget（预算）
         )
 
         return next_num_tokens
 
     def _schedule(self) -> SchedulerOutputs:
-        # Fix the current time.
+        # 记录当前时间，用于优先级排序
         now = time.monotonic()
 
         running: List[Sequence] = []
@@ -107,73 +110,73 @@ class OptSarathiScheduler(BaseScheduler):
         num_batched_tokens: int = 0
 
         ######################################################################
-        # Phase 1: Add existing running sequence groups to the batch.
-        # There are two cases:
-        # 1. The sequence group has incomplete prefill. The routine
-        # remains identical to the one in sarathi scheduler for such sequences.
-        # 2. The sequence group has completed prefill. In this case, we need to
-        # check for memory availability for the next chunk of decode tokens, and preempt
-        # some sequence groups if necessary. Note that, the preempted sequence groups
-        # might belong to either of the two categories.
+        # 阶段 1：将已有的运行中序列组加入 batch。(处理正在运行的请求)
+        # 存在两种情况：
+        # 1. 序列组的 prefill 尚未完成。这类序列的处理流程与 Sarathi 调度器中的逻辑完全一致。
+        # 2. 序列组的 prefill 已经完成。在这种情况下，我们需要检查下一段解码 token 的内存可用性，
+        #    并在必要时抢占（preempt）一些序列组。
+        #
+        # 需要注意，被抢占的序列组可能属于上述两类中的任意一种。
         ######################################################################
 
-        # NOTE(woosuk): Preemption happens only when there is no available slot
-        # to keep all the sequence groups in the RUNNING state.
-        # In this case, the policy is responsible for deciding which sequence
-        # groups to preempt.
+        # 注意：只有在没有可用槽位，让所有序列组保持 RUNNING 状态时，才会发生抢占。
+        # 此时，策略负责决定抢占哪些序列组。
         self.running = self.policy.sort_by_priority(now, self.running)
 
-        # in first pass process all the requests with prefill completed
-        # this allows us to accurately account for the number of decode tokens
+        # 优先级1：处理 Decode 任务
+        # 首轮处理先所有已完成预填充的请求, 以便准确统计解码 token 的数量
         running_prefills: List[Sequence] = []
 
         while self.running:
             seq = self.running.pop(0)
 
+            # 如果请求被暂停，暂不处理
             if not seq.is_paused():
                 running.append(seq)
                 continue
 
+            # 如果是 Prefill 还没跑完的任务，先存起来，稍后处理
             if not seq.prompt_stage_processing_finished:
                 running_prefills.append(seq)
                 continue
 
             while not self.block_manager.can_append_slot():
                 if self.running:
-                    # Preempt the lowest-priority sequence groups.
+                    # 如果显存不足，执行 _preempt 将低优先级请求踢回等待队列，腾出空间
                     victim_seq = self.running.pop(-1)
                     self._preempt(victim_seq)
                     preempted_seq_ids.append(victim_seq.seq_id)
                 else:
-                    # No other sequence groups can be preempted.
-                    # Preempt the current sequence group.
+                    # 如果 self.running 已经空了，说明：
+                    # 1. 也就是当前 Batch 里除了我（seq），其他人都被踢光了。
+                    # 2. 即使这样，剩下的空间还是不够我放下一个 Token。
+                    # 那么，没办法，只能把自己也停掉。
                     self._preempt(seq)
                     preempted_seq_ids.append(seq.seq_id)
                     break
             else:
-                # Append new slots to the sequence group.
+                # 在物理显存中真正分配这个 slot
                 self._append_slot(seq)
                 running.append(seq)
-                num_batched_tokens += 1
+                num_batched_tokens += 1 # 扣除一个token的预算
                 scheduled_seq_metadata_list.append(
                     SequenceScheduleMetadata.from_sequence(seq)
                 )
 
-        # now add the requests with prefill incomplete
-        # the memory for all these prefills has already been allocated
-        # so we should be able to run all of them
+        # 优先级2：处理已加入running列表，但只有部分chunk执行了prefill，没有完全执行完Prefill阶段的请求。
+        # 现在加入尚未完成预填充的请求，这些预填充所需的内存早已分配完毕，
+        # 因此能够一次性全部运行它们
         for seq in running_prefills:
+            # 断言：确保这里面装的确实是还没跑完 Prefill 的任务
             assert not seq.prompt_stage_processing_finished
 
             next_num_prefill_tokens = self._get_seq_next_num_prefill_tokens(
                 seq, num_batched_tokens
             )
 
-            # as long as the request could fit in the batch previously
-            # it should be able to fit in the batch now
-            # so in non-pipeline case this condition should always be false
-            # however, in pipeline case, the grouping of requests can change
-            # between different microbatches, so this is not guaranteed to be always true
+            # 只要该请求先前能放入整个批次，现在也应该能放得下。
+            # 因此在非流水线场景下，这个条件永远为假；
+            # 但在流水线场景里，不同微批次之间请求的分组可能变化，所以并不保证永远成立。
             if next_num_prefill_tokens == 0:
                 running.append(seq)
                 continue
@@ -186,56 +189,59 @@ class OptSarathiScheduler(BaseScheduler):
             )
             running.append(seq)
 
+        # 优先级3：处理等待队列的新情求
         ######################################################################
-        # Phase 2: Add waiting (new) sequence groups to the batch.
-        # This routine is nearly-identical to the one in sarathi scheduler
+        # Phase 2: 处理等待队列中的新请求 (New Requests)
+        # 目标：Piggybacking (捎带执行)，实现 Stall-free Batching
         ######################################################################
         # Optimization: We do not sort the waiting queue since the preempted
         # sequence groups are added to the front and the new sequence groups
         # are added to the back.
+        # 只要还有 Budget (num_batched_tokens < chunk_size)，就尝试加入新请求
         while self.waiting:
             seq = self.waiting[0]
 
-            # This is required to handle benchmarking where we set request arrival time ahead of time
+            # 处理 Benchmarking 的特殊情况（模拟请求到达时间）
             if seq.arrival_time > now:
                 break
 
+            # 检查 Prompt 是否超过模型最大支持长度
             if not self._check_request_prompt_length(seq):
                 ignored_seq_ids.append(seq.seq_id)
                 continue
 
-            # If the sequence group cannot be allocated, stop.
+            # 如果显存不够，这里不会抢占，而是直接不调度该新请求
             if not self.block_manager.can_allocate(seq):
                 # this is different from vllm scheduler
                 # even if we cannot allocate this sequence group
                 # there might be other sequence groups that can be allocated
                 break
 
-            # The total number of sequences in the RUNNING state should not
-            # exceed the maximum number of sequences.
+            # 检查最大并发序列数限制
             if len(running) >= self.scheduler_config.max_num_seqs:
                 break
 
-            # check if we can fit the prefill in the batch
+            # 计算这个新请求能分到多少 Budget
             next_num_prefill_tokens = self._get_seq_next_num_prefill_tokens(
                 seq, num_batched_tokens
             )
 
+            # 如果计算结果为 0，说明 num_batched_tokens 已经达到了 chunk_size
+            # 此时停止接纳新请求
             if next_num_prefill_tokens == 0:
                 break
 
-            seq = self.waiting.pop(0)
-            self._allocate(seq)
-            num_batched_tokens += next_num_prefill_tokens
-            scheduled_seq_metadata_list.append(
+            seq = self.waiting.pop(0)                       # 真正从等待队列中移除
+            self._allocate(seq)                             # 在 Block Manager 中正式分配显存呢
+            num_batched_tokens += next_num_prefill_tokens   # 扣除预算
+            scheduled_seq_metadata_list.append(             # 告诉引擎，这个新请求本轮只跑 next_num_prefill_tokens 这么长
                 SequenceScheduleMetadata.from_sequence(
                     seq, prompt_chunk_len=next_num_prefill_tokens
                 )
             )
-            running.append(seq)
+            running.append(seq)                             # 加入本轮运行名单
 
-        # make sure that prefills are at the start of the batch, so that we don't violate assumptions
-        # made in the original vllm codebase
+        # 将本轮构建好的 running 列表（包含 Phase 1 的未处理完的老请求和 Phase 2 的新请求）赋值给 self.running，作为系统的最新状态。
         self.running = running
 
         return SchedulerOutputs(

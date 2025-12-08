@@ -1,57 +1,83 @@
-# Sarathi-Serve
+# Opt-Sarathi-Serve
 
-Sarathi-Serve is a high througput and low-latency LLM serving framework. Please refer to our [OSDI'24 paper](https://www.usenix.org/conference/osdi24/presentation/agrawal) for more details. 
+Sarathi-Serve 是一个高吞吐、低延迟的大模型推理框架，技术细节详见的 [OSDI'24 paper](https://www.usenix.org/conference/osdi24/presentation/agrawal) 论文。
+本项目基于 Sarathi-Serve 做更进一步的优化。
 
-## Setup
+---
 
-### Setup CUDA
+## 工作
 
-Sarathi-Serve has been tested with CUDA 12.3 on H100 and A100 GPUs.
+### 适配模型
 
-### Clone repository
+- Qwen3/Qwen3-8B
+- Qwen/Qwen-7B
+
+### 测试的数据集
+
+- [ShareGPT_Vicuna_unfiltered](https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/tree/main)
+
+---
+
+## 运行
+
+### CUDA
+
+本项目基于 CUDA 12.8 on NVIDIA 3090 and 4090.
+
+### Clone 项目
 
 ```sh
 git clone https://github.com/Charmstok/sarathi-serve.git
 ```
 
-### Create mamba environment
+### conda 环境
 
-Setup mamba if you don't already have it,
-
-```sh
-wget https://github.com/conda-forge/miniforge/releases/latest/download/Mambaforge-Linux-x86_64.sh
-bash Mambaforge-Linux-x86_64.sh # follow the instructions from there
-```
-
-Create a Python 3.11 environment,
+创建 python 3.11 环境
 
 ```sh
-mamba create -p ./env python=3.11  
+conda create -p ./env python=3.11  
 ```
 
-### Install Sarathi-Serve
+激活创建的环境，
+
+```sh
+conda activate ./env
+```
+
+### 安装本项目需要的依赖以及 cuda 环境
 
 ```sh
 pip install -e .
 ```
 
-## Reproducing Results
+### 如何使用本项目？
 
-Refer to readmes in individual folders corresponding to each figure in `osdi-experiments`.
+#### 方式一，离线测试
 
-## Citation
-
-If you use our work, please consider citing our paper:
-
-```
-@article{agrawal2024taming,
-  title={Taming Throughput-Latency Tradeoff in LLM Inference with Sarathi-Serve},
-  author={Agrawal, Amey and Kedia, Nitin and Panwar, Ashish and Mohan, Jayashree and Kwatra, Nipun and Gulavani, Bhargav S and Tumanov, Alexey and Ramjee, Ramachandran},
-  journal={Proceedings of 18th USENIX Symposium on Operating Systems Design and Implementation, 2024, Santa Clara},
-  year={2024}
-}
+```shell
+python examples/offline_inference.py
 ```
 
-## Acknowledgment
+配置文件详见：`sarathi/config/config.py`
 
-This repository originally started as a fork of the [vLLM project](https://vllm-project.github.io/). Sarathi-Serve is a research prototype and does not have complete feature parity with open-source vLLM. We have only retained the most critical features and adopted the codebase for faster research iterations.
+#### 方式二，openai_entrypoints
+
+```shell
+python -m sarathi.entrypoints.openai.api_server \
+    --model_config_model Qwen/Qwen-7B \
+    --model_config_max_model_len 1024 \
+    --worker_config_gpu_memory_utilization 0.9
+```
+
+获取更多帮助，
+
+```sh
+python -m sarathi.entrypoints.api_server --help
+```
+
+---
+
+## 致谢
+
+本仓库最初源自 [sarathi-serve](https://github.com/microsoft/sarathi-serve) 项目 的一个分支。 本项目仅为研究原型，并未与开源版 sarathi-serve 保持功能完全对等。
+我们仅保留了最关键的功能，并对代码进行了精简，以便更快地进行研究迭代。
