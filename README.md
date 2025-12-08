@@ -47,6 +47,7 @@ conda activate ./env
 ### 安装本项目需要的依赖以及 cuda 环境
 
 ```sh
+pip install -r requirements.txt
 pip install -e .
 ```
 
