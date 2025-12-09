@@ -41,7 +41,7 @@ parallel_config = ParallelConfig(
 scheduler_config = OptSarathiSchedulerConfig(
     chunk_size=100,
     max_num_seqs=10,
-    policy_type="fcfs",
+    policy_name="spf",
 )
 
 metrics_config = MetricsConfig(

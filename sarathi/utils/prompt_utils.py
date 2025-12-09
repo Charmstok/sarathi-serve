@@ -3,11 +3,11 @@ from typing import List, Union
 
 
 def get_prompts_from_dataset(
-        data_source: Union[str, List[dict]],
+        data_source: str,
         samples_num: int
 ) -> List[str]:
     ######################################################################
-    # 从数据集中提取每个 ID 对应的第一个 human 提示词。
+    # 从ShareGPT格式的数据集中提取每个 ID 对应的第一个 human 提示词。
     # 目前测试的数据集：[https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/tree/main]
     #
     # Args:

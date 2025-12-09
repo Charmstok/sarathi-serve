@@ -5,6 +5,7 @@ from typing import Optional
 
 from sarathi.config.base_poly_config import BasePolyConfig
 from sarathi.config.flat_dataclass import create_flat_dataclass
+from sarathi.core.policy import PolicyFactory
 from sarathi.logger import init_logger
 from sarathi.transformers_utils.config import get_config
 from sarathi.types import AttentionBackend, ResourceMapping, SchedulerType
@@ -182,6 +183,21 @@ class BaseSchedulerConfig(BasePolyConfig):
             "help": "Maximum number of sequences to be processed in a single iteration (batch size)."
         },
     )
+    policy_name: str = field(
+        default="fcfs",
+        metadata={
+            "help": f"调度器选择哪种调度策略，支持的策略有：{PolicyFactory.get_available_policies()}"
+        },
+    )
+
+    def __post_init__(self):
+        if self.policy_name not in PolicyFactory.get_available_policies():
+            msg = (
+                f"错误: 不支持的策略 '{self.policy_name}'。\n"
+                f"支持的策略有: {PolicyFactory.get_available_policies()}"
+            )
+            raise ValueError(msg)
+
 
     @abstractmethod
     def get_max_num_batched_tokens(self, max_model_len: int):
