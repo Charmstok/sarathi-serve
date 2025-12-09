@@ -8,6 +8,9 @@ from sarathi.core.block_space_manager.orca_block_space_manager import (
 from sarathi.core.block_space_manager.sarathi_block_space_manager import (
     SarathiBlockSpaceManager,
 )
+from sarathi.core.block_space_manager.opt_sarathi_block_space_manager import (
+    OptSarathiBlockSpaceManager,
+)
 from sarathi.core.block_space_manager.simple_chunking_block_space_manager import (
     SimpleChunkingBlockSpaceManager,
 )
@@ -30,6 +33,7 @@ BlockSpaceManagerRegistry.register(
     SchedulerType.FASTER_TRANSFORMER, FasterTransformerBlockSpaceManager
 )
 BlockSpaceManagerRegistry.register(SchedulerType.SARATHI, SarathiBlockSpaceManager)
+BlockSpaceManagerRegistry.register(SchedulerType.OPT_SARATHI, OptSarathiBlockSpaceManager)
 BlockSpaceManagerRegistry.register(
     SchedulerType.SIMPLE_CHUNKING, SimpleChunkingBlockSpaceManager
 )

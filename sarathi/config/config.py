@@ -164,7 +164,7 @@ class CacheConfig:
 @dataclass
 class ParallelConfig:
     pipeline_parallel_size: int = field(
-        default=2, metadata={"help": "Number of pipeline parallel groups."}
+        default=1, metadata={"help": "Number of pipeline parallel groups."}
     )
     tensor_parallel_size: int = field(
         default=1, metadata={"help": "Number of tensor parallel groups."}
@@ -274,6 +274,39 @@ class SarathiSchedulerConfig(BaseSchedulerConfig):
     def get_type():
         return SchedulerType.SARATHI
 
+@dataclass
+class OptSarathiSchedulerConfig(BaseSchedulerConfig):
+    chunk_size: int = field(
+        default=512, metadata={"help": "Size of each chunk for Opt_Sarathi scheduler."}
+    )
+    enable_dynamic_chunking_schedule: bool = field(
+        default=False, metadata={"help": "Enable dynamic chunking schedule."}
+    )
+    low_chunk_size: Optional[int] = field(
+        default=None, metadata={"help": "Minimum chunk size for dynamic chunking."}
+    )
+    high_chunk_size: Optional[int] = field(
+        default=None, metadata={"help": "Maximum chunk size for dynamic chunking."}
+    )
+    chunk_schedule_max_tokens: Optional[int] = field(
+        default=None,
+        metadata={"help": "Maximum number of tokens for chunk scheduling."},
+    )
+    chunk_schedule_stages: Optional[int] = field(
+        default=None, metadata={"help": "Number of stages for chunk scheduling."}
+    )
+
+    def get_max_num_batched_tokens(self, max_model_len: int):
+        # Sarathi never schedules more than chunk_size tokens in one iteration.
+        if self.enable_dynamic_chunking_schedule:
+            return self.high_chunk_size
+        else:
+            return self.chunk_size
+
+    @staticmethod
+    def get_type():
+        return SchedulerType.OPT_SARATHI
+
 
 @dataclass
 class MetricsConfig:
@@ -364,7 +397,7 @@ class SystemConfig:
     cache_config: CacheConfig = field(default_factory=CacheConfig)
     parallel_config: ParallelConfig = field(default_factory=ParallelConfig)
     scheduler_config: BaseSchedulerConfig = field(
-        default_factory=SarathiSchedulerConfig
+        default_factory=OptSarathiSchedulerConfig
     )
     metrics_config: MetricsConfig = field(default_factory=MetricsConfig)
 
@@ -378,7 +411,7 @@ class BaseEndpointConfig(ABC):
     cache_config: CacheConfig = field(default_factory=CacheConfig)
     parallel_config: ParallelConfig = field(default_factory=ParallelConfig)
     scheduler_config: BaseSchedulerConfig = field(
-        default_factory=SarathiSchedulerConfig
+        default_factory=OptSarathiSchedulerConfig
     )
     metrics_config: MetricsConfig = field(default_factory=MetricsConfig)
 
