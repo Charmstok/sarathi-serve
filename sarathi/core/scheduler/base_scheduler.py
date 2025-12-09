@@ -33,7 +33,8 @@ class BaseScheduler(ABC):
         self._iteration_id = -1
 
         # Instantiate the scheduling policy.
-        self.policy = PolicyFactory.get_policy(policy_name="fcfs")
+        self.policy_name = scheduler_config.policy_name
+        self.policy = PolicyFactory.get_policy(policy_name=self.policy_name)
         # Create the block space manager.
         self.block_manager = BlockSpaceManagerRegistry.get(
             scheduler_config.get_type(),
