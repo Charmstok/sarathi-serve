@@ -1,6 +1,7 @@
 # Opt-Sarathi-Serve
 
-Sarathi-Serve 是一个高吞吐、低延迟的大模型推理框架，技术细节详见的 [OSDI'24 paper](https://www.usenix.org/conference/osdi24/presentation/agrawal) 论文。
+Sarathi-Serve 是一个高吞吐、低延迟的大模型推理框架，技术细节详见 [OSDI'24 paper](https://www.usenix.org/conference/osdi24/presentation/agrawal) 论文。
+
 本项目基于 Sarathi-Serve 做更进一步的优化。
 
 ---
@@ -56,7 +57,7 @@ pip install -e .
 #### 方式一，离线测试
 
 ```shell
-python examples/offline_inference.py
+python offline/offline_inference.py
 ```
 
 配置文件详见：`sarathi/config/config.py`
@@ -80,5 +81,5 @@ python -m sarathi.entrypoints.api_server --help
 
 ## 致谢
 
-本仓库最初源自 [sarathi-serve](https://github.com/microsoft/sarathi-serve) 项目 的一个分支。 本项目仅为研究原型，并未与开源版 sarathi-serve 保持功能完全对等。
+本仓库源自 [sarathi-serve](https://github.com/microsoft/sarathi-serve) 项目 的一个分支。 本项目仅为研究原型，并未与开源版 sarathi-serve 保持功能完全对等。
 我们仅保留了最关键的功能，并对代码进行了精简，以便更快地进行研究迭代。
