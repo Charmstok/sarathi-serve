@@ -6,6 +6,7 @@ from sarathi.config import ModelConfig, ParallelConfig, MetricsConfig, SystemCon
     ReplicaConfig, OptSarathiSchedulerConfig
 from sarathi import LLMEngine, SamplingParams, RequestOutput
 from sarathi.utils.prompt_utils import get_prompts_from_dataset
+from sarathi.utils.output_utils import process_and_save_outputs
 
 BASE_OUTPUT_DIR = "./offline_inference_output"
 
@@ -17,7 +18,7 @@ BASE_OUTPUT_DIR = "./offline_inference_output"
 #     "未来AI的特征是什么？介绍一下。",
 # ]
 
-prompts = get_prompts_from_dataset("dataset/ShareGPT_V3_unfiltered_cleaned_split.json", 100)
+prompts = get_prompts_from_dataset("dataset/ShareGPT_V3_unfiltered_cleaned_split.json", 100, random_sample=True)
 
 
 sampling_params = SamplingParams(temperature=0.8, top_p=0.95, max_tokens=100)
@@ -41,7 +42,7 @@ parallel_config = ParallelConfig(
 scheduler_config = OptSarathiSchedulerConfig(
     chunk_size=100,
     max_num_seqs=10,
-    policy_name="spf",
+    policy_name="fcfs",
 )
 
 metrics_config = MetricsConfig(
@@ -96,15 +97,8 @@ def generate(
 # Generate texts from the prompts. The output is a list of RequestOutput objects
 # that contain the prompt, generated text, and other information.
 outputs = generate(llm_engine, prompts, sampling_params)
-# Print the outputs.
-for output in outputs:
-    prompt = output.prompt
-    generated_text = output.text
-    print("===========================================================")
-    print(f"Prompt: {prompt!r}")
-    print("-----------------------------------------------------------")
-    print(f"Generated text: {generated_text!r}")
-    print("===========================================================")
+# 处理输出
+process_and_save_outputs(outputs)
 
 llm_engine.pull_worker_metrics()
 llm_engine.plot_metrics()
