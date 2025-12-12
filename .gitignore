@@ -164,6 +164,7 @@ cython_debug/
 
 # VSCode
 .vscode/
+.github/
 
 # DS Store
 .DS_Store
@@ -200,3 +201,5 @@ high_tail_latency_output
 profiling_outputs
 env_2
 embedding_output/
+dataset/
+offline/offline_inference
