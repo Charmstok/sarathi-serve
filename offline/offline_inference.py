@@ -34,12 +34,6 @@ model_config = ModelConfig(
     max_model_len=2048,
 )
 
-"""
-
-支持的模型：  TinyLlama/TinyLlama-1.1B-Chat-v1.0
-
-"""
-
 parallel_config = ParallelConfig(
     tensor_parallel_size=1,
     pipeline_parallel_size=1,
