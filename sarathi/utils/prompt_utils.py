@@ -20,6 +20,7 @@ def get_prompts_from_dataset(
         data_source (Union[str, List[dict]]): JSON 数据集的路径(str)
         samples_num (int): 需要的数据样本的数量。
         random_sample (bool): 是否随机打乱读取。
+        save (bool): 是否需要将结果保存到数据来源的目录下。
 
     Returns:
         List[str]: 提取出的提示词字符串列表。

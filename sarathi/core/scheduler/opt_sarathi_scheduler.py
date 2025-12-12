@@ -7,7 +7,7 @@ from sarathi.config import (
     CacheConfig,
     ModelConfig,
     ParallelConfig,
-    SarathiSchedulerConfig,
+    OptSarathiSchedulerConfig,
 )
 from sarathi.core.block_space_manager.sarathi_block_space_manager import (
     SarathiBlockSpaceManager,
@@ -25,7 +25,7 @@ class OptSarathiScheduler(BaseScheduler):
     def __init__(
         self,
         model_config: ModelConfig,
-        scheduler_config: SarathiSchedulerConfig,
+        scheduler_config: OptSarathiSchedulerConfig,
         cache_config: CacheConfig,
         parallel_config: ParallelConfig,
     ) -> None:
