@@ -10,14 +10,6 @@ from sarathi.utils.output_utils import process_and_save_outputs
 
 BASE_OUTPUT_DIR = "./offline_inference_output"
 
-# Sample prompts.
-# prompts = [
-#     "你好，你是什么大模型？是Qwen系列吗？如果是你当前是最新版本吗？",
-#     "介绍一下西安电子科技大学吧。",
-#     "自注意力机制是什么？解释具体原理。",
-#     "未来AI的特征是什么？介绍一下。",
-# ]
-
 prompts = get_prompts_from_dataset("dataset/ShareGPT_V3_unfiltered_cleaned_split.json", 1000, random_sample=False)
 
 
@@ -44,8 +36,6 @@ scheduler_config = OptSarathiSchedulerConfig(
     max_num_seqs=10,
     policy_name="fcfs",
 )
-
-# scheduler_config = VllmSchedulerConfig()
 
 metrics_config = MetricsConfig(
     write_metrics=True,
