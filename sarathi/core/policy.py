@@ -45,6 +45,16 @@ class SPF(Policy):
     ) -> float:
         return 1.0 / seq.get_prompt_len()
 
+# 最短剩余时间优先
+class SRTF(Policy):
+
+    def get_priority(
+        self,
+        now: float,
+        seq: Sequence,
+    ) -> float:
+        return len(seq.get_prompt_len()) - seq.prompt_tokens_processed
+
 # 老化策略
 class AGING(Policy):
 
@@ -67,6 +77,7 @@ class PolicyFactory:
     _POLICY_REGISTRY = {
         "fcfs": FCFS,
         "spf": SPF,
+        "srtf": SRTF,
         "aging": AGING,
     }
 
