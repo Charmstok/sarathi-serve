@@ -40,6 +40,7 @@ class OptSarathiScheduler(BaseScheduler):
         self.high_chunk_size = self.scheduler_config.high_chunk_size
         self.chunk_schedule_max_tokens = self.scheduler_config.chunk_schedule_max_tokens
         self.chunk_schedule_stages = self.scheduler_config.chunk_schedule_stages
+        self.min_chunk_threshold = self.scheduler_config.min_chunk_threshold
 
         if self.enable_dynamic_chunking_schedule:
             assert self.chunk_schedule_stages > 0
@@ -91,9 +92,13 @@ class OptSarathiScheduler(BaseScheduler):
         else:
             chunk_size = self.chunk_size
 
+        remaining_budget = chunk_size - num_batched_tokens
+        if remaining_budget < self.min_chunk_threshold:
+            return 0
+
         next_num_tokens = min(
             seq.get_prompt_len() - seq.get_num_prompt_tokens_stage_processed(), # 剩余 prompt 长度
-            chunk_size - num_batched_tokens,                                    # 剩余 budget（预算）
+            remaining_budget,                                                   # 剩余 budget（预算）
         )
 
         return next_num_tokens
@@ -174,9 +179,9 @@ class OptSarathiScheduler(BaseScheduler):
                 seq, num_batched_tokens
             )
 
-            # 只要该请求先前能放入整个批次，现在也应该能放得下。
-            # 因此在非流水线场景下，这个条件永远为假；
-            # 但在流水线场景里，不同微批次之间请求的分组可能变化，所以并不保证永远成立。
+            # 如果本轮剩余 budget 不足（_get_seq_next_num_prefill_tokens 返回 0），
+            # 先把该请求放回 running，保持占位，等下一轮再继续 prefill。
+            # 在流水线场景或开启最小分块阈值时可能出现这种情况。
             if next_num_prefill_tokens == 0:
                 running.append(seq)
                 continue

@@ -54,15 +54,21 @@ pip install -e .
 
 ### 如何使用本项目？
 
-#### 方式一，离线测试
+#### 方式一: 简单对话
 
 ```shell
-python offline/offline_inference.py
+python example/chat_only.py
 ```
 
-配置文件详见：`sarathi/config/config.py`
+#### 方式二: 离线测试
 
-#### 方式二，openai_entrypoints
+基准测试得到的各项指标可以在 offline_inference_output 目录下查看.
+
+```shell
+python example/offline_inference.py
+```
+
+#### 方式三: openai_entrypoints
 
 ```shell
 python -m sarathi.entrypoints.openai.api_server \
@@ -71,15 +77,20 @@ python -m sarathi.entrypoints.openai.api_server \
     --worker_config_gpu_memory_utilization 0.9
 ```
 
-获取更多帮助，
+以上的运行命令没有涵盖所有参数, 你可以运行下列 sh 脚本获取更多帮助，
 
 ```sh
 python -m sarathi.entrypoints.api_server --help
 ```
 
+### 调参脚本
+
+如果你想要更高效的性能, 可能需要调整某些参数.
+
+详见, [调整参数 README.md](example/parameter_selection/readme.md)
+
 ---
 
 ## 致谢
 
-本仓库源自 [sarathi-serve](https://github.com/microsoft/sarathi-serve) 项目 的一个分支。 本项目仅为研究原型，并未与开源版 sarathi-serve 保持功能完全对等。
-我们仅保留了最关键的功能，并对代码进行了精简，以便更快地进行研究迭代。
+本仓库源自 [sarathi-serve](https://github.com/microsoft/sarathi-serve) 项目 的一个分支。 本项目仅为研究原型，我们仅保留了原项目最关键的功能，并对代码进行了精简，以便更快地进行研究迭代。

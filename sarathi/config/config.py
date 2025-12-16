@@ -311,6 +311,9 @@ class OptSarathiSchedulerConfig(BaseSchedulerConfig):
     chunk_schedule_stages: Optional[int] = field(
         default=None, metadata={"help": "Number of stages for chunk scheduling."}
     )
+    min_chunk_threshold: Optional[int] = field(
+        default=0, metadata={"help": "最小分块阈值, token 预算低于这个值选择本轮不再填充新的 chunk."}
+    )
 
     def get_max_num_batched_tokens(self, max_model_len: int):
         # Sarathi never schedules more than chunk_size tokens in one iteration.
@@ -322,6 +325,16 @@ class OptSarathiSchedulerConfig(BaseSchedulerConfig):
     @staticmethod
     def get_type():
         return SchedulerType.OPT_SARATHI
+    
+    def __post_init__(self):
+        self._verify_args()
+
+    def _verify_args(self) -> None:
+        if not self.min_chunk_threshold < self.chunk_size * 0.3:
+            raise ValueError(
+                "最小填充阈值(min_chunk_threshold) 必须小于 chunk_size 的 30%. 当前最小填充阈值为: "
+                f"{self.min_chunk_threshold}."
+            )
 
 
 @dataclass
