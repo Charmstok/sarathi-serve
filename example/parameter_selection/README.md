@@ -51,12 +51,18 @@ bash example/parameter_selection/offline_get_threshold.sh
 - `--max_prefill_regression <float>`：允许的 `prefill_ratio` 最大回归比例（默认 `0.02`，即允许比 baseline 差 +2%）。
 
 示例：
+
+```shell
+# 默认
+python example/parameter_selection/select_threshold.py
+```
+
 ```shell
 # 更保守：只允许 +1% 的 request/prefill 回归
-python3 example/parameter_selection/select_threshold.py --max_request_regression 0.01 --max_prefill_regression 0.01
+python example/parameter_selection/select_threshold.py --max_request_regression 0.01 --max_prefill_regression 0.01
 ```
 
 ```shell
 # 直接用最小 score 选阈值
-python3 example/parameter_selection/select_threshold.py --strategy min_score
+python example/parameter_selection/select_threshold.py --strategy min_score
 ```
