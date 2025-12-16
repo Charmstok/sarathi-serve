@@ -87,7 +87,7 @@ python -m sarathi.entrypoints.api_server --help
 
 如果你想要更高效的性能, 可能需要调整某些参数.
 
-详见, [调整参数 README.md](example/parameter_selection/readme.md)
+详见, [调整参数 README.md](example/parameter_selection/README.md)
 
 ---
 

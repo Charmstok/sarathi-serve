@@ -26,6 +26,6 @@ bash example/parameter_selection/offline_get_threshold.sh
 ### 2. 选择最大阈值
 
 ```shell
-python select_threshold.py
+python example/parameter_selection/select_threshold.py
 ```
 
