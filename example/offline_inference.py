@@ -3,7 +3,7 @@ from tqdm import tqdm
 from typing import List
 
 from sarathi.config import ModelConfig, ParallelConfig, MetricsConfig, SystemConfig, WorkerConfig, \
-    ReplicaConfig, OptSarathiSchedulerConfig, VllmSchedulerConfig
+    ReplicaConfig, OptSarathiSchedulerConfig
 from sarathi import LLMEngine, SamplingParams, RequestOutput
 from sarathi.utils.prompt_utils import get_prompts_from_dataset
 from sarathi.utils.output_utils import process_and_save_outputs
