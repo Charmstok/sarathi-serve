@@ -18,7 +18,7 @@ from sarathi.utils.prompt_utils import get_prompts_from_dataset
 
 BASE_OUTPUT_DIR = "./offline_inference_output"
 
-prompts = get_prompts_from_dataset("dataset/ShareGPT_V3_unfiltered_cleaned_split.json", 1000, random_sample=False)
+prompts = get_prompts_from_dataset("dataset/ShareGPT_V3_unfiltered_cleaned_split.json", 50, random_sample=False)
 
 
 sampling_params = SamplingParams(temperature=0.8, top_p=0.95, max_tokens=100)

@@ -28,7 +28,9 @@ for threshold in $(seq 0 "${MAX_THRESHOLD}"); do
 
   files=(
     "request_execution_time.csv"
+    "request_execution_time_normalized.csv"
     "prefill_e2e_time.csv"
+    "prefill_time_execution_plus_preemption_normalized.csv"
     "decode_time_execution_plus_preemption_normalized.csv"
   )
 
