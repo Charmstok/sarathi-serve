@@ -14,7 +14,7 @@ prompts = [
     "未来AI的特征是什么？介绍一下。",
 ]
 
-sampling_params = SamplingParams(temperature=0.8, top_p=0.95, max_tokens=100)
+sampling_params = SamplingParams(temperature=0.8, top_p=0.95, max_tokens=2048)
 
 replica_config = ReplicaConfig(
 
