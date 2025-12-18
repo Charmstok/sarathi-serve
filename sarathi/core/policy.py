@@ -53,7 +53,7 @@ class SRTF(Policy):
         now: float,
         seq: Sequence,
     ) -> float:
-        return len(seq.get_prompt_len()) - seq.prompt_tokens_processed
+        return seq.get_prompt_len() - seq.prompt_tokens_processed
 
 # 老化策略
 class AGING(Policy):
@@ -65,11 +65,10 @@ class AGING(Policy):
     ) -> float:
         time_weight = 1.0
         prompt_weight = - 0.01
-        bias = float(seq.prompt_tokens_processed > 0) * 1000.0 # 已处理过prompt的序列优先级提高
+
         return (
             time_weight * (now - seq.arrival_time)
             + prompt_weight * (seq.get_prompt_len() - seq.prompt_tokens_processed)
-            + bias
         )
 
 class PolicyFactory:
