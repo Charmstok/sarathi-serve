@@ -314,6 +314,12 @@ class OptSarathiSchedulerConfig(BaseSchedulerConfig):
     min_chunk_threshold: Optional[int] = field(
         default=0, metadata={"help": "最小分块阈值, token 预算低于这个值选择本轮不再填充新的 chunk."}
     )
+    enable_select_stats_csv: bool = field(
+        default=False,
+        metadata={
+            "help": "在基准测试中启用该选项，以在模型执行前统计 seq_metadata_list 特征并写入 CSV：decode_tokens、prefill_tokens、prefill_processed_tokens、latency_ms。"
+        },
+    )
 
     def get_max_num_batched_tokens(self, max_model_len: int):
         # Sarathi never schedules more than chunk_size tokens in one iteration.

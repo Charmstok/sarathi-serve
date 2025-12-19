@@ -1,3 +1,6 @@
+import csv
+import os
+from time import perf_counter
 from typing import List, Optional, Tuple
 
 import torch
@@ -255,3 +258,116 @@ class ModelRunner:
         self.attention_backend_wrapper.end_forward()
 
         return output
+
+    def run_with_select_csv(
+        self,
+        seq_metadata_list: List[SequenceMetadata],
+    ) -> torch.Tensor:
+        # Prepare input tensors.
+        with self._prepare_inputs_e2e_timer:
+            input_tokens, input_positions = self._prepare_inputs(seq_metadata_list)
+
+        self.attention_backend_wrapper.begin_forward(seq_metadata_list)
+
+        decode_tokens = sum(1 for sm in seq_metadata_list if not sm.is_prompt)
+        prefill_tokens = sum(sm.prompt_chunk_len for sm in seq_metadata_list if sm.is_prompt)
+        prefill_processed_tokens = sum(
+            sm.seq.get_num_prompt_tokens_stage_processed()
+            for sm in seq_metadata_list
+            if sm.is_prompt
+        )
+
+        collect_prefill_only = prefill_tokens != 0
+        if collect_prefill_only:
+            cuda_timing = self.device.type == "cuda" and torch.cuda.is_available()
+            if cuda_timing:
+                start_event = torch.cuda.Event(enable_timing=True)
+                end_event = torch.cuda.Event(enable_timing=True)
+                start_event.record()
+            else:
+                start_time = perf_counter()
+
+        with self._model_execution_e2e_timer:
+            # Execute the model.
+            try:
+
+                output = self.model(
+                    hidden_states=input_tokens,
+                    positions=input_positions,
+                    attention_backend_wrapper=self.attention_backend_wrapper,
+                )
+                if collect_prefill_only and cuda_timing:
+                    end_event.record()
+            except RuntimeError as e:
+                logger.error(
+                    f"RuntimeError: {e} for seq_metadata_list: {seq_metadata_list}"
+                )
+                raise e
+
+        if collect_prefill_only:
+            if cuda_timing:
+                if getattr(self._model_execution_e2e_timer, "disabled", True):
+                    end_event.synchronize()
+                latency_ms = start_event.elapsed_time(end_event)
+            else:
+                latency_ms = (perf_counter() - start_time) * 1e3
+
+            try:
+                self._append_select_stats_csv_row(
+                    decode_tokens=decode_tokens,
+                    prefill_tokens=prefill_tokens,
+                    prefill_processed_tokens=prefill_processed_tokens,
+                    latency_ms=latency_ms,
+                )
+            except Exception:
+                logger.exception("Failed to write select stats CSV row.")
+
+        with self._sampler_e2e_timer:
+            if self.sampler is not None:
+                output = self.sampler(output, seq_metadata_list)
+
+        self.attention_backend_wrapper.end_forward()
+
+        return output
+    
+
+    def _append_select_stats_csv_row(
+        self,
+        decode_tokens: int,
+        prefill_tokens: int,
+        prefill_processed_tokens: int,
+        latency_ms: float,
+    ) -> None:
+        csv_path = os.environ.get("SARATHI_SELECT_CSV_PATH")
+        if csv_path:
+            csv_path = csv_path.replace("{rank}", str(self.rank))
+        else:
+            output_dir = os.environ.get("SARATHI_OUTPUT_DIR", "./offline_inference_output")
+            csv_path = os.path.join(output_dir, f"select_stats_rank{self.rank}.csv")
+
+        os.makedirs(os.path.dirname(csv_path) or ".", exist_ok=True)
+
+        write_header = not os.path.exists(csv_path) or os.path.getsize(csv_path) == 0
+        with open(csv_path, mode="a", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            if write_header:
+                writer.writerow(
+                    [
+                        "decode_tokens",
+                        "prefill_tokens",
+                        "prefill_processed_tokens",
+                        "latency_ms",
+                    ]
+                )
+            writer.writerow(
+                [decode_tokens, prefill_tokens, prefill_processed_tokens, latency_ms]
+            )
+
+        logger.info(
+            "select_stats_csv append path=%s decode_tokens=%d prefill_tokens=%d prefill_processed_tokens=%d latency_ms=%.3f",
+            csv_path,
+            decode_tokens,
+            prefill_tokens,
+            prefill_processed_tokens,
+            latency_ms,
+        )

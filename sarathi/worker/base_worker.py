@@ -23,6 +23,7 @@ from sarathi.model_executor.parallel_utils.parallel_state import (
     get_tensor_model_parallel_rank,
     initialize_model_parallel,
 )
+from sarathi.types import SchedulerType
 from sarathi.utils.threading_utils import exit_on_error, synchronized
 
 logger = init_logger(__name__)
@@ -176,9 +177,17 @@ class BaseWorker:
 
         _, seq_metadata_list = self.seq_manager.on_schedule(scheduler_outputs)
 
-        sampler_outputs = self.model_runner.run(
-            seq_metadata_list,
-        )
+        if (
+            self.config.scheduler_config.get_type() == SchedulerType.OPT_SARATHI
+            and self.config.scheduler_config.enable_select_stats_csv
+        ):
+            sampler_outputs = self.model_runner.run_with_select_csv(
+                seq_metadata_list,
+            )
+        else:
+            sampler_outputs = self.model_runner.run(
+                seq_metadata_list,
+            )
 
         self.on_step_completed(scheduler_outputs, sampler_outputs)
 
