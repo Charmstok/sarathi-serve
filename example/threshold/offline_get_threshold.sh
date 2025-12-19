@@ -6,14 +6,14 @@ MAX_THRESHOLD=10
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RUN_TS="$(date +%F_%H-%M-%S)"
-OUTPUT_ROOT="${REPO_ROOT}/example/parameter_selection/threshold_output/${RUN_TS}"
+OUTPUT_ROOT="${REPO_ROOT}/example/threshold/threshold_output/${RUN_TS}"
 RUN_OUTPUT_DIR="${REPO_ROOT}/offline_inference_output"
 
 mkdir -p "${OUTPUT_ROOT}"
 
 for threshold in $(seq 0 "${MAX_THRESHOLD}"); do
   echo ">>> Running threshold=${threshold}"
-  python "${REPO_ROOT}/example/parameter_selection/offline_get_threshold.py" --min_chunk_threshold "${threshold}"
+  python "${REPO_ROOT}/example/threshold/offline_get_threshold.py" --min_chunk_threshold "${threshold}"
 
   # 找到最新生成的离线输出目录
   latest_dir="$(ls -1dt "${RUN_OUTPUT_DIR}"/*/ 2>/dev/null | head -n 1)"
