@@ -9,7 +9,7 @@
 ### 1. 获取基准测试结果
 
 ```shell
-bash example/parameter_selection/offline_get_threshold.sh
+bash example/threshold/offline_get_threshold.sh
 ```
 
 脚本说明：
@@ -20,7 +20,7 @@ bash example/parameter_selection/offline_get_threshold.sh
   - `prefill_e2e_time.csv`
   - `prefill_time_execution_plus_preemption_normalized.csv`
   - `decode_time_execution_plus_preemption_normalized.csv`
-- 结果按阈值分目录存放在 `example/parameter_selection/threshold_output/<脚本启动时间>/<threshold>/`，原始离线输出目录不会被删除。
+- 结果按阈值分目录存放在 `example/threshold/threshold_output/<脚本启动时间>/<threshold>/`，原始离线输出目录不会被删除。
 
 CSV 的含义（每行包含 `Request Id`、指标值、以及该指标的经验分布 `cdf`）：
 - `request_execution_time.csv`：请求在 GPU 上真正“执行”的总时长（跨所有尝试累计），不包含在 replica 上分配了资源但因 pipeline bubble / 调度抢占 / 重启间隔等导致的非执行时间。
@@ -46,7 +46,7 @@ CSV 的含义（每行包含 `Request Id`、指标值、以及该指标的经验
 
 直接运行 `select_threshold.py` 并传参即可（所有参数都是可选的）：
 
-- `--root <path>`：阈值输出根目录（默认 `example/parameter_selection/threshold_output`），其下应包含多个时间戳目录，每个时间戳目录内包含多个 `<threshold>/` 子目录及三个 CSV。
+- `--root <path>`：阈值输出根目录（默认 `example/threshold/threshold_output`），其下应包含多个时间戳目录，每个时间戳目录内包含多个 `<threshold>/` 子目录及三个 CSV。
 - `--baseline <int>`：归一化使用的基准阈值（默认 `0`）。若某个 run 没有该阈值目录，会自动回退为该 run 的最小阈值作为 baseline。
 - `--w_request <float>`：综合评分里 `request_ratio` 的权重（默认 `0.35`），越大越偏向优化 request 尾延迟。
 - `--w_prefill <float>`：综合评分里 `prefill_ratio` 的权重（默认 `0.35`），越大越偏向优化 TTFT 尾延迟。
@@ -59,18 +59,18 @@ CSV 的含义（每行包含 `Request Id`、指标值、以及该指标的经验
 
 ```shell
 # 默认
-python example/parameter_selection/select_threshold.py
+python example/threshold/select_threshold.py
 ```
 
 ```shell
 # 通过权重更强调 prefill 效率代理（prefill_exec_norm_ratio）
-python example/parameter_selection/select_threshold.py --w_prefill_exec_norm 0.35 --w_request 0.25 --w_prefill 0.25
+python example/threshold/select_threshold.py --w_prefill_exec_norm 0.35 --w_request 0.25 --w_prefill 0.25
 ```
 
 ```shell
 # 多次跑基准后，用更稳健/更保守的跨 run 聚合方式选参
-python example/parameter_selection/select_threshold.py --run_agg median
-python example/parameter_selection/select_threshold.py --run_agg p90
+python example/threshold/select_threshold.py --run_agg median
+python example/threshold/select_threshold.py --run_agg p90
 ```
 
 ---
