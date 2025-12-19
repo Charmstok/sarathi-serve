@@ -72,3 +72,19 @@ python example/parameter_selection/select_threshold.py --w_prefill_exec_norm 0.3
 python example/parameter_selection/select_threshold.py --run_agg median
 python example/parameter_selection/select_threshold.py --run_agg p90
 ```
+
+---
+
+## 参数 2：AGING策略的 `prompt_weight`
+
+要把 AGING 的参数（本质是 time_weight 和 prompt_weight）选得“更对”，核心是把两个量统一到同一尺度，并且明确**你想优化的目标**（TTFT 还是整体 E2E、吞吐还是公平）。
+
+优先级设定公式：`priority = time_weight * wait_seconds + prompt_weight * remaining_prompt_tokens`
+
+最简单、也最“物理一致”的做法是把 `prompt_weight` 设成 “**每个 prefill token 需要的秒数（取负号）**”，每个 prefill token 需要的秒数可以从基准测试结果（位于 ./offline_inference_output/{time}/replica_0/prefill_time_execution_plus_preemption_normalized.csv）。
+
+你可以选择使用离线测试时 `prefill_time_execution_plus_preemption_normalized` 的 **平均数 / 中位数** 等数值作为`prompt_weight`。
+
+当然，你也可以使用默认的数值 `0.01`。
+
+---
