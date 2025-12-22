@@ -34,7 +34,7 @@ scheduler_config = OptSarathiSchedulerConfig(
     chunk_size=256,
     max_num_seqs=32,
     policy_name="aging",
-    enable_select_stats_csv = True,
+    enable_select_stats_csv=True,
 )
 
 metrics_config = MetricsConfig(
