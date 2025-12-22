@@ -1,6 +1,7 @@
 import csv
 import os
 from time import perf_counter
+from datetime import datetime
 from typing import List, Optional, Tuple
 
 import torch
@@ -63,6 +64,8 @@ class ModelRunner:
         self._model_execution_e2e_timer = CpuTimer(
             CpuOperationMetrics.MODEL_EXECUTION_E2E, rank=self.rank
         )
+
+        self._select_stats_csv_timestamp = datetime.now().strftime("%Y%m%d-%H%M")
 
     def init_kv_cache(self, num_gpu_blocks: int):
         self.attention_backend_wrapper.init_gpu_cache(num_gpu_blocks)
@@ -341,9 +344,13 @@ class ModelRunner:
         csv_path = os.environ.get("SARATHI_SELECT_CSV_PATH")
         if csv_path:
             csv_path = csv_path.replace("{rank}", str(self.rank))
+            csv_path = csv_path.replace("{timestamp}", self._select_stats_csv_timestamp)
         else:
             output_dir = os.environ.get("SARATHI_OUTPUT_DIR", "./offline_inference_output")
-            csv_path = os.path.join(output_dir, f"select_stats_rank{self.rank}.csv")
+            csv_path = os.path.join(
+                output_dir,
+                f"select_stats_{self._select_stats_csv_timestamp}_rank{self.rank}.csv",
+            )
 
         os.makedirs(os.path.dirname(csv_path) or ".", exist_ok=True)
 
