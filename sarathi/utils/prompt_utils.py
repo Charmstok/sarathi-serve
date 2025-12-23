@@ -3,7 +3,7 @@ import json
 import random
 import os
 import csv
-from typing import List
+from typing import List, Optional
 
 
 def get_prompts_from_dataset(
@@ -99,3 +99,23 @@ def get_prompts_from_dataset(
             print(f"Warning: CSV 文件保存失败: {e}")
 
     return prompts
+
+def get_prompt_arrival_time_list(
+        num_requests: int,
+        interval_s: float = 0.1,
+        start_time: Optional[float] = None,
+) -> List[float]:
+    """
+    离线测试中，模拟请求到达的时间。
+
+    Args:
+        num_requests: 请求数量
+        interval_s: 请求“到达”的时间间隔
+        start_time: 开始时间（第一个请求的到达时间）
+
+    Returns:
+        List[float]: 请求到达时间的列表
+    """
+    if start_time is None:
+        start_time = time.monotonic()
+    return [start_time + i * interval_s for i in range(num_requests)]
