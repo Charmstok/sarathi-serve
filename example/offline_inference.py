@@ -73,7 +73,7 @@ def generate(
     else:
         if len(prompts_arrival_time) != len(prompts):
             raise ValueError(
-                f"prompts_arrival_time length mismatch: got {len(prompts_arrival_time)} but prompts has {len(prompts)}"
+                f"prompts_arrival_time 数量（ {len(prompts_arrival_time)}） 和 prompts 数量（ {len(prompts)}）不相等，请修改参数。"
             )
         for prompt, prompt_arrival_time in zip(prompts, prompts_arrival_time):
             llm_engine.add_request(prompt, sampling_params, arrival_time=prompt_arrival_time)
@@ -102,7 +102,7 @@ def generate(
 # that contain the prompt, generated text, and other information.
 outputs = generate(llm_engine, prompts, sampling_params, prompts_arrival_time)
 # 处理输出
-process_and_save_outputs(outputs)
+# process_and_save_outputs(outputs)
 
 llm_engine.pull_worker_metrics()
 llm_engine.plot_metrics()

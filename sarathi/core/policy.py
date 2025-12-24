@@ -1,3 +1,4 @@
+import os
 from typing import List
 from abc import ABC, abstractmethod
 
@@ -43,7 +44,7 @@ class SPF(Policy):
         now: float,
         seq: Sequence,
     ) -> float:
-        return 1.0 / seq.get_prompt_len()
+        return -1.0 * seq.get_prompt_len()
 
 # 最短剩余时间优先
 class SRTF(Policy):
@@ -53,7 +54,7 @@ class SRTF(Policy):
         now: float,
         seq: Sequence,
     ) -> float:
-        return seq.get_prompt_len() - seq.prompt_tokens_processed
+        return -1.0 * (seq.get_prompt_len() - seq.get_num_prompt_tokens_stage_processed())
 
 # 老化策略
 class AGING(Policy):
@@ -63,12 +64,12 @@ class AGING(Policy):
         now: float,
         seq: Sequence
     ) -> float:
-        time_weight = 1.0
-        prompt_weight = - 0.01
+        time_weight = 125.0 * 0.3
+        prompt_weight = -1.0
 
         return (
             time_weight * (now - seq.arrival_time)
-            + prompt_weight * (seq.get_prompt_len() - seq.prompt_tokens_processed)
+            + prompt_weight * (seq.get_prompt_len() - seq.get_num_prompt_tokens_stage_processed())
         )
 
 class PolicyFactory:
