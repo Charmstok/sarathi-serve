@@ -1,17 +1,20 @@
 import datetime
 from tqdm import tqdm
-from typing import List
+from typing import List, Optional
 
 from sarathi.config import ModelConfig, ParallelConfig, MetricsConfig, SystemConfig, WorkerConfig, \
     ReplicaConfig, OptSarathiSchedulerConfig
 from sarathi import LLMEngine, SamplingParams, RequestOutput
-from sarathi.utils.prompt_utils import get_prompts_from_dataset
+from sarathi.utils.prompt_utils import *
 from sarathi.utils.output_utils import process_and_save_outputs
 
 BASE_OUTPUT_DIR = "./offline_inference_output"
 
-prompts = get_prompts_from_dataset("dataset/ShareGPT_V3_unfiltered_cleaned_split.json", 1000, random_sample=False)
+PROMPTS_NUMBER = 100
 
+prompts = get_prompts_from_dataset("dataset/ShareGPT_V3_unfiltered_cleaned_split.json", PROMPTS_NUMBER, random_sample=False)
+
+prompts_arrival_time = prompt_arrival_time_smooth(len(prompts))
 
 sampling_params = SamplingParams(temperature=0.8, top_p=0.95, max_tokens=512)
 
@@ -34,7 +37,7 @@ parallel_config = ParallelConfig(
 scheduler_config = OptSarathiSchedulerConfig(
     chunk_size=256,
     max_num_seqs=10,
-    policy_name="fcfs",
+    policy_name="aging",
 )
 
 metrics_config = MetricsConfig(
@@ -62,9 +65,18 @@ def generate(
     llm_engine: LLMEngine,
     prompts: List[str],
     sampling_params: SamplingParams,
+    prompts_arrival_time: Optional[List[float]] = None,
 ) -> List[RequestOutput]:
-    for prompt in prompts:
-        llm_engine.add_request(prompt, sampling_params)
+    if prompts_arrival_time is None:
+        for prompt in prompts:
+            llm_engine.add_request(prompt, sampling_params)
+    else:
+        if len(prompts_arrival_time) != len(prompts):
+            raise ValueError(
+                f"prompts_arrival_time length mismatch: got {len(prompts_arrival_time)} but prompts has {len(prompts)}"
+            )
+        for prompt, prompt_arrival_time in zip(prompts, prompts_arrival_time):
+            llm_engine.add_request(prompt, sampling_params, arrival_time=prompt_arrival_time)
 
     num_requests = llm_engine.get_num_unfinished_requests()
     pbar = tqdm(total=num_requests, desc="Processed prompts")
@@ -88,7 +100,7 @@ def generate(
 
 # Generate texts from the prompts. The output is a list of RequestOutput objects
 # that contain the prompt, generated text, and other information.
-outputs = generate(llm_engine, prompts, sampling_params)
+outputs = generate(llm_engine, prompts, sampling_params, prompts_arrival_time)
 # 处理输出
 process_and_save_outputs(outputs)
 

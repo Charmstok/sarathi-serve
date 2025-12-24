@@ -100,13 +100,13 @@ def get_prompts_from_dataset(
 
     return prompts
 
-def get_prompt_arrival_time_list(
+def prompt_arrival_time_smooth(
         num_requests: int,
         interval_s: float = 0.1,
         start_time: Optional[float] = None,
 ) -> List[float]:
     """
-    离线测试中，模拟请求到达的时间。
+    离线测试中，模拟请求平滑到达系统的时间序列。
 
     Args:
         num_requests: 请求数量
@@ -116,6 +116,65 @@ def get_prompt_arrival_time_list(
     Returns:
         List[float]: 请求到达时间的列表
     """
+    if interval_s <= 0:
+        raise ValueError(f"interval_s 必须 > 0, got {interval_s}")
+    
     if start_time is None:
         start_time = time.monotonic()
     return [start_time + i * interval_s for i in range(num_requests)]
+
+def prompt_arrival_time_clustered(
+        num_requests: int,
+        interval_s: float = 0.1,
+        start_time: Optional[float] = None,
+        cluster_start_pct: float = 0.0,
+        cluster_end_pct: float = 0.0,
+) -> List[float]:
+    """
+    离线测试中，模拟“某一时刻开始，请求聚集”的到达时间序列。
+
+    聚集表现：在聚集区间内，请求到达间隔固定为 1ms；其余区间使用 interval_s。
+
+    Args:
+        num_requests: 请求数量
+        interval_s: 非聚集区间的请求到达间隔（秒）
+        start_time: 开始时间（第一个请求的到达时间，默认 time.monotonic()）
+        cluster_start_pct: 从第多少比例的请求开始聚集（[0, 1]），按索引计算为 int(num_requests * pct)
+        cluster_end_pct: 到第多少比例的请求停止聚集（[0, 1]，且 >= cluster_start_pct），区间为 [start_idx, end_idx)
+
+    Returns:
+        List[float]: 请求到达时间列表（长度为 num_requests）
+    """
+    if num_requests <= 0:
+        return []
+
+    if interval_s <= 0:
+        raise ValueError(f"interval_s 必须 > 0, got {interval_s}")
+
+    if not (0.0 <= cluster_start_pct <= 1.0):
+        raise ValueError(f"cluster_start_pct 必须在区间 [0, 1] 内, {cluster_start_pct}")
+    if not (0.0 <= cluster_end_pct <= 1.0):
+        raise ValueError(f"cluster_end_pct 必须在区间 [0, 1] 内, {cluster_end_pct}")
+    if cluster_end_pct < cluster_start_pct:
+        raise ValueError(
+            f"cluster_end_pct 必须 >= cluster_start_pct, {cluster_end_pct} < {cluster_start_pct}"
+        )
+
+    if start_time is None:
+        start_time = time.monotonic()
+
+    cluster_interval_s = 0.001
+    start_idx = int(num_requests * cluster_start_pct)
+    end_idx = int(num_requests * cluster_end_pct)
+    start_idx = max(0, min(num_requests, start_idx))
+    end_idx = max(start_idx, min(num_requests, end_idx))
+
+    arrival_times: List[float] = [start_time]
+    current_time = start_time
+
+    for request_idx in range(1, num_requests):
+        delta = cluster_interval_s if start_idx <= request_idx < end_idx else interval_s
+        current_time += delta
+        arrival_times.append(current_time)
+
+    return arrival_times
