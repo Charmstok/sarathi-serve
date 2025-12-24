@@ -262,7 +262,7 @@ def main() -> None:
     parser.add_argument(
         "--root",
         type=Path,
-        default=Path("example/parameter_selection/threshold_output"),
+        default=Path("example/threshold/threshold_output"),
         help="阈值输出根目录（包含多个时间戳子目录）。",
     )
     parser.add_argument(
