@@ -271,6 +271,9 @@ class ModelRunner:
         self.attention_backend_wrapper.begin_forward(seq_metadata_list)
 
         decode_tokens = sum(1 for sm in seq_metadata_list if not sm.is_prompt)
+        decode_history_tokens = sum(
+            sm.seq.get_len() for sm in seq_metadata_list if not sm.is_prompt
+        )
         prefill_tokens = sum(sm.prompt_chunk_len for sm in seq_metadata_list if sm.is_prompt)
         prefill_processed_tokens = sum(
             sm.seq.get_num_prompt_tokens_stage_processed()
@@ -313,6 +316,7 @@ class ModelRunner:
         try:
             self._append_select_stats_csv_row(
                 decode_tokens=decode_tokens,
+                decode_history_tokens=decode_history_tokens,
                 prefill_tokens=prefill_tokens,
                 prefill_processed_tokens=prefill_processed_tokens,
                 latency_ms=latency_ms,
@@ -327,12 +331,11 @@ class ModelRunner:
         self.attention_backend_wrapper.end_forward()
 
         return output
-    
 
-    # TODO:增加一个新的列: decode_history_token
     def _append_select_stats_csv_row(
         self,
         decode_tokens: int,
+        decode_history_tokens: int,
         prefill_tokens: int,
         prefill_processed_tokens: int,
         latency_ms: float,
@@ -351,11 +354,18 @@ class ModelRunner:
                 writer.writerow(
                     [
                         "decode_tokens",
+                        "decode_history_tokens",
                         "prefill_tokens",
                         "prefill_processed_tokens",
                         "latency_ms",
                     ]
                 )
             writer.writerow(
-                [decode_tokens, prefill_tokens, prefill_processed_tokens, latency_ms]
+                [
+                    decode_tokens,
+                    decode_history_tokens,
+                    prefill_tokens,
+                    prefill_processed_tokens,
+                    latency_ms,
+                ]
             )
