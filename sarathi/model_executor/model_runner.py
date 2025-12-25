@@ -65,8 +65,6 @@ class ModelRunner:
             CpuOperationMetrics.MODEL_EXECUTION_E2E, rank=self.rank
         )
 
-        self._select_stats_csv_timestamp = datetime.now().strftime("%Y%m%d-%H%M")
-
     def init_kv_cache(self, num_gpu_blocks: int):
         self.attention_backend_wrapper.init_gpu_cache(num_gpu_blocks)
 
@@ -280,15 +278,13 @@ class ModelRunner:
             if sm.is_prompt
         )
 
-        collect_prefill_only = prefill_tokens != 0
-        if collect_prefill_only:
-            cuda_timing = self.device.type == "cuda" and torch.cuda.is_available()
-            if cuda_timing:
-                start_event = torch.cuda.Event(enable_timing=True)
-                end_event = torch.cuda.Event(enable_timing=True)
-                start_event.record()
-            else:
-                start_time = perf_counter()
+        cuda_timing = self.device.type == "cuda" and torch.cuda.is_available()
+        if cuda_timing:
+            start_event = torch.cuda.Event(enable_timing=True)
+            end_event = torch.cuda.Event(enable_timing=True)
+            start_event.record()
+        else:
+            start_time = perf_counter()
 
         with self._model_execution_e2e_timer:
             # Execute the model.
@@ -299,7 +295,7 @@ class ModelRunner:
                     positions=input_positions,
                     attention_backend_wrapper=self.attention_backend_wrapper,
                 )
-                if collect_prefill_only and cuda_timing:
+                if cuda_timing:
                     end_event.record()
             except RuntimeError as e:
                 logger.error(
@@ -307,23 +303,22 @@ class ModelRunner:
                 )
                 raise e
 
-        if collect_prefill_only:
-            if cuda_timing:
-                if getattr(self._model_execution_e2e_timer, "disabled", True):
-                    end_event.synchronize()
-                latency_ms = start_event.elapsed_time(end_event)
-            else:
-                latency_ms = (perf_counter() - start_time) * 1e3
+        if cuda_timing:
+            if getattr(self._model_execution_e2e_timer, "disabled", True):
+                end_event.synchronize()
+            latency_ms = start_event.elapsed_time(end_event)
+        else:
+            latency_ms = (perf_counter() - start_time) * 1e3
 
-            try:
-                self._append_select_stats_csv_row(
-                    decode_tokens=decode_tokens,
-                    prefill_tokens=prefill_tokens,
-                    prefill_processed_tokens=prefill_processed_tokens,
-                    latency_ms=latency_ms,
-                )
-            except Exception:
-                logger.exception("Failed to write select stats CSV row.")
+        try:
+            self._append_select_stats_csv_row(
+                decode_tokens=decode_tokens,
+                prefill_tokens=prefill_tokens,
+                prefill_processed_tokens=prefill_processed_tokens,
+                latency_ms=latency_ms,
+            )
+        except Exception:
+            logger.exception("Failed to write select stats CSV row.")
 
         with self._sampler_e2e_timer:
             if self.sampler is not None:
@@ -334,6 +329,7 @@ class ModelRunner:
         return output
     
 
+    # TODO:增加一个新的列: decode_history_token
     def _append_select_stats_csv_row(
         self,
         decode_tokens: int,
@@ -341,16 +337,10 @@ class ModelRunner:
         prefill_processed_tokens: int,
         latency_ms: float,
     ) -> None:
-        csv_path = os.environ.get("SARATHI_SELECT_CSV_PATH")
-        if csv_path:
-            csv_path = csv_path.replace("{rank}", str(self.rank))
-            csv_path = csv_path.replace("{timestamp}", self._select_stats_csv_timestamp)
-        else:
-            output_dir = os.environ.get("SARATHI_OUTPUT_DIR", "./offline_inference_output")
-            csv_path = os.path.join(
-                output_dir,
-                f"select_stats_{self._select_stats_csv_timestamp}_rank{self.rank}.csv",
-            )
+        csv_path = os.path.join(
+            self.config.replica_config.output_dir,
+            f"select_stats_rank{self.rank}.csv",
+        )
 
         os.makedirs(os.path.dirname(csv_path) or ".", exist_ok=True)
 
@@ -369,12 +359,3 @@ class ModelRunner:
             writer.writerow(
                 [decode_tokens, prefill_tokens, prefill_processed_tokens, latency_ms]
             )
-
-        logger.info(
-            "select_stats_csv append path=%s decode_tokens=%d prefill_tokens=%d prefill_processed_tokens=%d latency_ms=%.3f",
-            csv_path,
-            decode_tokens,
-            prefill_tokens,
-            prefill_processed_tokens,
-            latency_ms,
-        )
