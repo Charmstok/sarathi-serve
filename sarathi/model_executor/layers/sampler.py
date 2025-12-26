@@ -80,10 +80,24 @@ class Sampler(nn.Module):
                 logits, top_ks, top_ps
             ).cpu()
 
-        return [
-            SamplerOutput(seq_metadata_list[i].seq.seq_id, flashinfer_sample_result[i])
-            for i in range(len(seq_metadata_list))
-        ]
+        sampler_outputs: SamplerOutputs = []
+        for i, seq_metadata in enumerate(seq_metadata_list):
+            token_id = flashinfer_sample_result[i]
+            if isinstance(token_id, torch.Tensor):
+                token_id = int(token_id.item())
+            else:
+                token_id = int(token_id)
+
+            if token_id < 0 or token_id >= self.vocab_size:
+                raise ValueError(
+                    "Sampled token id is out of range: "
+                    f"token_id={token_id}, vocab_size={self.vocab_size}, "
+                    f"seq_id={seq_metadata.seq.seq_id}"
+                )
+
+            sampler_outputs.append(SamplerOutput(seq_metadata.seq.seq_id, token_id))
+
+        return sampler_outputs
 
 
 def _get_logits(
