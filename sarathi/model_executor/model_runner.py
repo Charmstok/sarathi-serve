@@ -270,24 +270,30 @@ class ModelRunner:
 
         self.attention_backend_wrapper.begin_forward(seq_metadata_list)
 
-        decode_tokens = sum(1 for sm in seq_metadata_list if not sm.is_prompt)
-        decode_history_tokens = sum(
-            sm.seq.get_len() for sm in seq_metadata_list if not sm.is_prompt
-        )
-        prefill_tokens = sum(sm.prompt_chunk_len for sm in seq_metadata_list if sm.is_prompt)
-        prefill_processed_tokens = sum(
-            sm.seq.get_num_prompt_tokens_stage_processed()
-            for sm in seq_metadata_list
-            if sm.is_prompt
-        )
+        batch_request_count = len(seq_metadata_list)
+        decode_tokens = 0
+        decode_history_tokens = 0
+        prefill_tokens = 0
+        prefill_processed_tokens = 0
+        for seq_metadata in seq_metadata_list:
+            if seq_metadata.is_prompt:
+                prefill_tokens += seq_metadata.prompt_chunk_len
+                prefill_processed_tokens += (
+                    seq_metadata.seq.get_num_prompt_tokens_stage_processed()
+                )
+            else:
+                decode_tokens += 1
+                decode_history_tokens += seq_metadata.seq.get_len()
 
-        cuda_timing = self.device.type == "cuda" and torch.cuda.is_available()
-        if cuda_timing:
-            start_event = torch.cuda.Event(enable_timing=True)
-            end_event = torch.cuda.Event(enable_timing=True)
-            start_event.record()
-        else:
-            start_time = perf_counter()
+        collect_prefill_only = prefill_tokens != 0
+        if collect_prefill_only:
+            cuda_timing = self.device.type == "cuda" and torch.cuda.is_available()
+            if cuda_timing:
+                start_event = torch.cuda.Event(enable_timing=True)
+                end_event = torch.cuda.Event(enable_timing=True)
+                start_event.record()
+            else:
+                start_time = perf_counter()
 
         with self._model_execution_e2e_timer:
             # Execute the model.
@@ -298,7 +304,7 @@ class ModelRunner:
                     positions=input_positions,
                     attention_backend_wrapper=self.attention_backend_wrapper,
                 )
-                if cuda_timing:
+                if collect_prefill_only and cuda_timing:
                     end_event.record()
             except RuntimeError as e:
                 logger.error(
@@ -306,23 +312,25 @@ class ModelRunner:
                 )
                 raise e
 
-        if cuda_timing:
-            if getattr(self._model_execution_e2e_timer, "disabled", True):
-                end_event.synchronize()
-            latency_ms = start_event.elapsed_time(end_event)
-        else:
-            latency_ms = (perf_counter() - start_time) * 1e3
+        if collect_prefill_only:
+            if cuda_timing:
+                if getattr(self._model_execution_e2e_timer, "disabled", True):
+                    end_event.synchronize()
+                latency_ms = start_event.elapsed_time(end_event)
+            else:
+                latency_ms = (perf_counter() - start_time) * 1e3
 
-        try:
-            self._append_select_stats_csv_row(
-                decode_tokens=decode_tokens,
-                decode_history_tokens=decode_history_tokens,
-                prefill_tokens=prefill_tokens,
-                prefill_processed_tokens=prefill_processed_tokens,
-                latency_ms=latency_ms,
-            )
-        except Exception:
-            logger.exception("Failed to write select stats CSV row.")
+            try:
+                self._append_select_stats_csv_row(
+                    decode_tokens=decode_tokens,
+                    decode_history_tokens=decode_history_tokens,
+                    batch_request_count=batch_request_count,
+                    prefill_tokens=prefill_tokens,
+                    prefill_processed_tokens=prefill_processed_tokens,
+                    latency_ms=latency_ms,
+                )
+            except Exception:
+                logger.exception("Failed to write select stats CSV row.")
 
         with self._sampler_e2e_timer:
             if self.sampler is not None:
@@ -336,6 +344,7 @@ class ModelRunner:
         self,
         decode_tokens: int,
         decode_history_tokens: int,
+        batch_request_count: int,
         prefill_tokens: int,
         prefill_processed_tokens: int,
         latency_ms: float,
@@ -355,6 +364,7 @@ class ModelRunner:
                     [
                         "decode_tokens",
                         "decode_history_tokens",
+                        "batch_request_count",
                         "prefill_tokens",
                         "prefill_processed_tokens",
                         "latency_ms",
@@ -364,6 +374,7 @@ class ModelRunner:
                 [
                     decode_tokens,
                     decode_history_tokens,
+                    batch_request_count,
                     prefill_tokens,
                     prefill_processed_tokens,
                     latency_ms,

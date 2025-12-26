@@ -8,12 +8,12 @@ from typing import Iterable, Mapping, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 
-# NOTE: 用户要求 {path} 在脚本内设置，不需要命令行参数。
 CSV_PATH = (
-    "offline_inference_output/2025-12-26_15-30-39/replica_0/select_stats_rank0.csv"
+    "offline_inference_output/2025-12-26_17-28-15/replica_0/select_stats_rank0.csv"
 )
 MODEL_CACHE_PATH = os.path.join(os.path.dirname(__file__), "time_predictor_mlp.pt")
 ENABLE_MODEL_CACHE = True
+INPUT_DIM = 6
 
 
 BatchState = Mapping[str, Union[int, float, torch.Tensor]]
@@ -28,6 +28,7 @@ def _read_select_stats_csv(csv_path: str) -> Tuple[torch.Tensor, torch.Tensor]:
 
     decode_tokens = []
     decode_history_tokens = []
+    batch_request_count = []
     prefill_tokens = []
     prefill_processed_tokens = []
     latency_ms = []
@@ -37,6 +38,7 @@ def _read_select_stats_csv(csv_path: str) -> Tuple[torch.Tensor, torch.Tensor]:
         required = {
             "decode_tokens",
             "decode_history_tokens",
+            "batch_request_count",
             "prefill_tokens",
             "prefill_processed_tokens",
             "latency_ms",
@@ -51,12 +53,14 @@ def _read_select_stats_csv(csv_path: str) -> Tuple[torch.Tensor, torch.Tensor]:
         for row in reader:
             decode_tokens.append(float(row["decode_tokens"]))
             decode_history_tokens.append(float(row["decode_history_tokens"]))
+            batch_request_count.append(float(row["batch_request_count"]))
             prefill_tokens.append(float(row["prefill_tokens"]))
             prefill_processed_tokens.append(float(row["prefill_processed_tokens"]))
             latency_ms.append(float(row["latency_ms"]))
 
     x_decode_tokens = torch.tensor(decode_tokens, dtype=torch.float64)
     x_decode_history = torch.tensor(decode_history_tokens, dtype=torch.float64)
+    x_batch_request_count = torch.tensor(batch_request_count, dtype=torch.float64)
     x_prefill = torch.tensor(prefill_tokens, dtype=torch.float64)
     x_prefill_processed = torch.tensor(prefill_processed_tokens, dtype=torch.float64)
     y_latency = torch.tensor(latency_ms, dtype=torch.float64)
@@ -64,9 +68,16 @@ def _read_select_stats_csv(csv_path: str) -> Tuple[torch.Tensor, torch.Tensor]:
     ones = torch.ones_like(x_decode_tokens)
 
     # 设计矩阵列顺序严格对应数学模型:
-    # [1, decode_history_tokens, decode_tokens, prefill_tokens, prefill_processed_tokens]
+    # [1, decode_history_tokens, decode_tokens, batch_request_count, prefill_tokens, prefill_processed_tokens]
     x = torch.stack(
-        [ones, x_decode_history, x_decode_tokens, x_prefill, x_prefill_processed],
+        [
+            ones,
+            x_decode_history,
+            x_decode_tokens,
+            x_batch_request_count,
+            x_prefill,
+            x_prefill_processed,
+        ],
         dim=1,
     )
 
@@ -242,7 +253,7 @@ class TimePredictor:
             "y_mean": self.y_mean,
             "y_std": self.y_std,
             "hidden_sizes": self.hidden_sizes,
-            "in_features": 5,
+            "in_features": INPUT_DIM,
         }
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         torch.save(payload, path)
@@ -251,7 +262,12 @@ class TimePredictor:
     def load(path: str) -> "TimePredictor":
         payload = torch.load(path, map_location="cpu")
         hidden_sizes = tuple(int(h) for h in payload["hidden_sizes"])
-        in_features = int(payload.get("in_features", 5))
+        in_features = int(payload.get("in_features", INPUT_DIM))
+        if in_features != INPUT_DIM:
+            raise ValueError(
+                f"Incompatible cached model: in_features={in_features}, expected {INPUT_DIM}. "
+                f"Delete {path} to retrain."
+            )
         model = _MLPRegressor(in_features=in_features, hidden_sizes=hidden_sizes)
         model.load_state_dict(payload["state_dict"])
         model.eval()
@@ -265,10 +281,10 @@ class TimePredictor:
         )
 
     def predict_from_features(self, features: torch.Tensor) -> torch.Tensor:
-        if features.shape[-1] != 5:
+        if features.shape[-1] != INPUT_DIM:
             raise ValueError(
-                "Expected features[..., 5] with columns "
-                "[1, decode_history, decode, prefill, prefill_processed]. "
+                f"Expected features[..., {INPUT_DIM}] with columns "
+                "[1, decode_history, decode, batch_request_count, prefill, prefill_processed]. "
                 f"Got shape {tuple(features.shape)}"
             )
         x = features.to(dtype=torch.float32)
@@ -288,6 +304,7 @@ class TimePredictor:
         *,
         decode_tokens: Union[int, float, torch.Tensor],
         decode_history_tokens: Union[int, float, torch.Tensor],
+        batch_request_count: Union[int, float, torch.Tensor],
         prefill_tokens: Union[int, float, torch.Tensor],
         prefill_processed_tokens: Union[int, float, torch.Tensor],
         device: Optional[torch.device] = None,
@@ -295,11 +312,12 @@ class TimePredictor:
     ) -> torch.Tensor:
         dt = torch.as_tensor(decode_tokens, dtype=dtype, device=device)
         dht = torch.as_tensor(decode_history_tokens, dtype=dtype, device=device)
+        brc = torch.as_tensor(batch_request_count, dtype=dtype, device=device)
         pt = torch.as_tensor(prefill_tokens, dtype=dtype, device=device)
         ppt = torch.as_tensor(prefill_processed_tokens, dtype=dtype, device=device)
-        dt, dht, pt, ppt = torch.broadcast_tensors(dt, dht, pt, ppt)
+        dt, dht, brc, pt, ppt = torch.broadcast_tensors(dt, dht, brc, pt, ppt)
         ones = torch.ones_like(dt, dtype=dtype, device=dt.device)
-        features = torch.stack([ones, dht, dt, pt, ppt], dim=-1)
+        features = torch.stack([ones, dht, dt, brc, pt, ppt], dim=-1)
         return self.predict_from_features(features)
 
 
@@ -329,26 +347,28 @@ def F(batch_state: BatchState, *, csv_path: str = CSV_PATH) -> torch.Tensor:
     """
     输入当前 Batch 状态，输出预测执行时间 T_pred (ms)。
 
-    数学模型:
-      T_pred = c_base + alpha*decode_history_tokens + delta*decode_tokens
-               + beta*prefill_tokens + gamma*prefill_processed_tokens
+    输入特征:
+      decode_tokens, decode_history_tokens, batch_request_count,
+      prefill_tokens, prefill_processed_tokens
     """
     predictor = _get_predictor(csv_path)
 
     try:
         decode_tokens = batch_state["decode_tokens"]
         decode_history_tokens = batch_state["decode_history_tokens"]
+        batch_request_count = batch_state["batch_request_count"]
         prefill_tokens = batch_state["prefill_tokens"]
         prefill_processed_tokens = batch_state["prefill_processed_tokens"]
     except KeyError as e:
         raise KeyError(
             "batch_state must contain keys: decode_tokens, decode_history_tokens, "
-            "prefill_tokens, prefill_processed_tokens"
+            "batch_request_count, prefill_tokens, prefill_processed_tokens"
         ) from e
 
     return predictor.predict(
         decode_tokens=decode_tokens,
         decode_history_tokens=decode_history_tokens,
+        batch_request_count=batch_request_count,
         prefill_tokens=prefill_tokens,
         prefill_processed_tokens=prefill_processed_tokens,
     )
@@ -377,6 +397,7 @@ if __name__ == "__main__":
     batch = {
         "decode_tokens": 28,
         "decode_history_tokens": 2240,
+        "batch_request_count": 32,
         "prefill_tokens": 228,
         "prefill_processed_tokens": 179,
     }
