@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 
 CSV_PATH = (
-    "offline_inference_output/2025-12-26_17-28-15/replica_0/select_stats_rank0.csv"
+    "offline_inference_output/2025-12-29_14-25-24/replica_0/select_stats_rank0.csv"
 )
 MODEL_CACHE_PATH = os.path.join(os.path.dirname(__file__), "time_predictor_mlp.pt")
 ENABLE_MODEL_CACHE = True
@@ -51,12 +51,22 @@ def _read_select_stats_csv(csv_path: str) -> Tuple[torch.Tensor, torch.Tensor]:
             )
 
         for row in reader:
-            decode_tokens.append(float(row["decode_tokens"]))
-            decode_history_tokens.append(float(row["decode_history_tokens"]))
-            batch_request_count.append(float(row["batch_request_count"]))
-            prefill_tokens.append(float(row["prefill_tokens"]))
-            prefill_processed_tokens.append(float(row["prefill_processed_tokens"]))
-            latency_ms.append(float(row["latency_ms"]))
+            # Some CSVs may accidentally contain the header row again (e.g. concatenation).
+            if row.get("decode_tokens") == "decode_tokens":
+                continue
+            if not row or all(v is None or str(v).strip() == "" for v in row.values()):
+                continue
+            try:
+                decode_tokens.append(float(row["decode_tokens"]))
+                decode_history_tokens.append(float(row["decode_history_tokens"]))
+                batch_request_count.append(float(row["batch_request_count"]))
+                prefill_tokens.append(float(row["prefill_tokens"]))
+                prefill_processed_tokens.append(float(row["prefill_processed_tokens"]))
+                latency_ms.append(float(row["latency_ms"]))
+            except (TypeError, ValueError) as e:
+                raise ValueError(
+                    f"Bad numeric row in {csv_path} at line {reader.line_num}: {row}"
+                ) from e
 
     x_decode_tokens = torch.tensor(decode_tokens, dtype=torch.float64)
     x_decode_history = torch.tensor(decode_history_tokens, dtype=torch.float64)

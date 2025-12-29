@@ -51,12 +51,21 @@ def _read_select_stats_csv(path: str) -> SelectStats:
             )
 
         for row in reader:
-            decode_tokens.append(float(row["decode_tokens"]))
-            decode_history_tokens.append(float(row["decode_history_tokens"]))
-            batch_request_count.append(float(row["batch_request_count"]))
-            prefill_tokens.append(float(row["prefill_tokens"]))
-            prefill_processed_tokens.append(float(row["prefill_processed_tokens"]))
-            latency_ms.append(float(row["latency_ms"]))
+            if row.get("decode_tokens") == "decode_tokens":
+                continue
+            if not row or all(v is None or str(v).strip() == "" for v in row.values()):
+                continue
+            try:
+                decode_tokens.append(float(row["decode_tokens"]))
+                decode_history_tokens.append(float(row["decode_history_tokens"]))
+                batch_request_count.append(float(row["batch_request_count"]))
+                prefill_tokens.append(float(row["prefill_tokens"]))
+                prefill_processed_tokens.append(float(row["prefill_processed_tokens"]))
+                latency_ms.append(float(row["latency_ms"]))
+            except (TypeError, ValueError) as e:
+                raise ValueError(
+                    f"Bad numeric row in {path} at line {reader.line_num}: {row}"
+                ) from e
 
     return SelectStats(
         decode_tokens=torch.tensor(decode_tokens, dtype=torch.float32),
@@ -181,4 +190,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
