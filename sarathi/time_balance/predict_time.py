@@ -8,11 +8,7 @@ from typing import Iterable, Mapping, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 
-CSV_PATH = (
-    "offline_inference_output/2025-12-29_14-25-24/replica_0/select_stats_rank0.csv"
-)
-MODEL_CACHE_PATH = os.path.join(os.path.dirname(__file__), "time_predictor_mlp.pt")
-ENABLE_MODEL_CACHE = True
+from sarathi.time_balance.config import CSV_PATH, ENABLE_MODEL_CACHE, MODEL_CACHE_PATH
 INPUT_DIM = 6
 
 
@@ -128,7 +124,7 @@ class TimePredictor:
         csv_path: str = CSV_PATH,
         *,
         seed: int = 0,
-        epochs: int = 300,
+        epochs: int = 500,
         lr: float = 2e-3,
         weight_decay: float = 1e-4,
         hidden_sizes: Iterable[int] = (64, 32),
