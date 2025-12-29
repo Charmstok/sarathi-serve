@@ -102,7 +102,7 @@ def detokenize_incrementally(
             new_tokens = tokenizer.convert_ids_to_tokens(
                 all_input_ids[-6:], skip_special_tokens=skip_special_tokens
             )
-        except ValueError as e:
+        except (ValueError, OverflowError, TypeError) as e:
             new_tokens = ["[UNK]"] * 6
             logger.warning(f"Warning: {e}")
 
@@ -118,7 +118,7 @@ def detokenize_incrementally(
             new_tokens = tokenizer.convert_ids_to_tokens(
                 [new_token_id], skip_special_tokens=skip_special_tokens
             )
-        except ValueError as e:
+        except (ValueError, OverflowError, TypeError) as e:
             new_tokens = [prev_tokens[-1]]
             logger.warning(f"Warning: {e}")
         output_tokens = prev_tokens + new_tokens
