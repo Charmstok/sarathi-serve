@@ -12,7 +12,10 @@ from sarathi.core.datatypes.sequence import (
     SequenceScheduleMetadata,
 )
 from sarathi.core.datatypes.sequence_status import SequenceStatus
+from sarathi.logger import init_logger
 from sarathi.utils.threading_utils import synchronized
+
+logger = init_logger(__name__)
 
 
 class BaseSequenceManager(ABC):
@@ -30,9 +33,17 @@ class BaseSequenceManager(ABC):
         del self.seq_map[seq_id]
 
     def _preempt_seq(self, seq_id: str) -> None:
-        assert seq_id in self.seq_map
-        seq = self.seq_map[seq_id]
-        assert seq.is_executing()
+        seq = self.seq_map.get(seq_id)
+        if seq is None:
+            # This can happen if the same request is both preempted and ignored
+            # in a single scheduling iteration, or if it has already been freed.
+            logger.warning(f"Skipping preempt for unknown seq_id: {seq_id}")
+            return
+        # A preempted sequence may already have been moved back to the WAITING
+        # state by the scheduler before we process `preempted_seq_ids`.
+        assert seq.is_executing() or seq.is_waiting(), (
+            f"seq_id: {seq_id}, status: {seq.get_status()}"
+        )
         seq.reset_for_recompute()
 
     def _pause_seq(self, seq_id: str) -> None:
@@ -60,14 +71,21 @@ class BaseSequenceManager(ABC):
         self,
         scheduler_outputs: SchedulerOutputs,
     ) -> Tuple[List[Sequence], List[SequenceMetadata]]:
+        ignored_seq_id_set = set(scheduler_outputs.ignored_seq_ids)
         ignored_seqs: List[Sequence] = []
         for seq_id in scheduler_outputs.ignored_seq_ids:
-            assert seq_id in self.seq_map
-            seq = self.seq_map[seq_id]
+            seq = self.seq_map.get(seq_id)
+            if seq is None:
+                logger.warning(f"Skipping ignore for unknown seq_id: {seq_id}")
+                continue
             ignored_seqs.append(seq)
             self._free_seq(seq_id)
 
         for seq_id in scheduler_outputs.preempted_seq_ids:
+            if seq_id in ignored_seq_id_set:
+                # If a request is ignored due to prompt length, treat it as ignored
+                # even if it was also marked as preempted in the same iteration.
+                continue
             self._preempt_seq(seq_id)
 
         seq_metadata_list: List[SequenceMetadata] = []

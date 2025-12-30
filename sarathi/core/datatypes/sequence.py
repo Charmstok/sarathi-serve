@@ -173,7 +173,10 @@ class Sequence:
         return SequenceStatus.is_running(self.get_status())
 
     def reset_for_recompute(self):
-        self.set_status(SequenceStatus.WAITING)
+        # This can be called after the scheduler has already moved the sequence
+        # to the WAITING state. Avoid an invalid WAITING -> WAITING transition.
+        if not self.is_waiting():
+            self.set_status(SequenceStatus.WAITING)
         self.prompt_tokens_processed = 0
         self.prompt_tokens_stage_processed = 0
         self.prompt_processing_finished = False

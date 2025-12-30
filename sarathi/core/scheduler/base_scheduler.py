@@ -120,6 +120,11 @@ class BaseScheduler(ABC):
     ) -> None:
         assert seq.is_executing()
         self._free_seq(seq)
+        # Preempted sequences are moved to the waiting queue. Make sure the
+        # sequence status reflects that so subsequent logic (e.g., prompt length
+        # checks) can safely apply WAITING-only transitions.
+        if not seq.is_waiting():
+            seq.set_status(SequenceStatus.WAITING)
         self.waiting.insert(0, seq)
 
     def _check_request_prompt_length(self, seq: Sequence) -> bool:
@@ -128,6 +133,11 @@ class BaseScheduler(ABC):
                 f"Input prompt ({seq.get_len()} tokens) is too long"
                 f" and exceeds limit of {self.prompt_limit}"
             )
+            # Ensure we only transition to FINISHED_IGNORED from a valid state.
+            # In some preemption paths a PAUSED/RUNNING seq can temporarily land
+            # in the waiting queue.
+            if not seq.is_waiting():
+                seq.set_status(SequenceStatus.WAITING)
             seq.set_status(SequenceStatus.FINISHED_IGNORED)
             self.waiting.pop(0)
             return False
