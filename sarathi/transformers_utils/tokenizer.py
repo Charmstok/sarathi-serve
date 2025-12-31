@@ -6,6 +6,27 @@ from sarathi.logger import init_logger
 
 logger = init_logger(__name__)
 
+_FALLBACK_UNK_TOKEN = "[UNK]"
+
+
+def _sanitize_tokens(
+    tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
+    tokens: List[object],
+) -> List[str]:
+    """Ensure all tokens are strings (fast tokenizers crash on None values)."""
+    unk = getattr(tokenizer, "unk_token", None) or _FALLBACK_UNK_TOKEN
+    sanitized: List[str] = []
+    replaced = 0
+    for token in tokens:
+        if isinstance(token, str):
+            sanitized.append(token)
+        else:
+            sanitized.append(unk)
+            replaced += 1
+    if replaced:
+        logger.warning(f"Tokenizer produced {replaced} non-string tokens; replaced with {unk!r}.")
+    return sanitized
+
 
 def get_tokenizer(
     tokenizer_name: str,
@@ -122,6 +143,9 @@ def detokenize_incrementally(
             new_tokens = [prev_tokens[-1]]
             logger.warning(f"Warning: {e}")
         output_tokens = prev_tokens + new_tokens
+
+    new_tokens = _sanitize_tokens(tokenizer, new_tokens)
+    output_tokens = _sanitize_tokens(tokenizer, output_tokens)
 
     # The prefix text is necessary only to defeat cleanup algorithms in
     # the decode which decide to add a space or not depending on the

@@ -195,7 +195,7 @@ class Sequence:
                 return
 
         # Check if the sequence has reached max_tokens.
-        if self.get_output_len() == self.sampling_params.max_tokens:
+        if self.state.num_output_tokens >= self.sampling_params.max_tokens:
             self.set_status(SequenceStatus.FINISHED_LENGTH_CAPPED)
             return
 

@@ -8,8 +8,10 @@ from sarathi import LLMEngine, SamplingParams, RequestOutput
 from sarathi.utils.prompt_utils import get_prompts_from_dataset
 
 BASE_OUTPUT_DIR = "./offline_inference_output"
+TRUNCATE_OVERLONG_PROMPTS = True
+MIN_OUTPUT_TOKENS = 1
 
-prompts = get_prompts_from_dataset("dataset/ShareGPT_V3_unfiltered_cleaned_split.json", 1500, random_sample=True)
+prompts = get_prompts_from_dataset("dataset/ShareGPT_V3_unfiltered_cleaned_split.json", 150, random_sample=True)
 
 
 sampling_params = SamplingParams(temperature=0.8, top_p=0.95, max_tokens=512)
@@ -22,7 +24,7 @@ replica_config = ReplicaConfig(
 
 model_config = ModelConfig(
     model="Qwen/Qwen3-8B",
-    max_model_len=512,
+    max_model_len=1024,
 )
 
 parallel_config = ParallelConfig(
@@ -43,7 +45,7 @@ metrics_config = MetricsConfig(
 )
 
 worker_config = WorkerConfig(
-    # gpu_memory_utilization=0.8
+    gpu_memory_utilization=0.7
 )
 
 system_config = SystemConfig(
@@ -63,8 +65,42 @@ def generate(
     prompts: List[str],
     sampling_params: SamplingParams,
 ) -> List[RequestOutput]:
+    max_model_len = llm_engine.get_model_config().max_model_len
+    if max_model_len is None:
+        raise ValueError("model_config.max_model_len is None; please set it explicitly.")
+    if max_model_len < 1:
+        raise ValueError(f"model_config.max_model_len must be >= 1, got {max_model_len}.")
+
+    truncated_prompts = 0
+    skipped_prompts = 0
+
     for prompt in prompts:
-        llm_engine.add_request(prompt, sampling_params)
+        prompt_token_ids = llm_engine.tokenizer.encode(prompt)
+        if TRUNCATE_OVERLONG_PROMPTS:
+            max_prompt_len = max(max_model_len - MIN_OUTPUT_TOKENS, 1)
+            if len(prompt_token_ids) > max_prompt_len:
+                prompt_token_ids = prompt_token_ids[-max_prompt_len:]
+                prompt = llm_engine.tokenizer.decode(
+                    prompt_token_ids, skip_special_tokens=True
+                )
+                truncated_prompts += 1
+
+        max_new_tokens_budget = max_model_len - len(prompt_token_ids)
+        if max_new_tokens_budget < 1:
+            skipped_prompts += 1
+            continue
+
+        per_request_sampling_params = SamplingParams(
+            temperature=sampling_params.temperature,
+            top_p=sampling_params.top_p,
+            top_k=sampling_params.top_k,
+            stop=sampling_params.stop,
+            ignore_eos=sampling_params.ignore_eos,
+            max_tokens=min(sampling_params.max_tokens, max_new_tokens_budget),
+        )
+        llm_engine.add_request(
+            prompt, per_request_sampling_params, prompt_token_ids=prompt_token_ids
+        )
 
     num_requests = llm_engine.get_num_unfinished_requests()
     pbar = tqdm(total=num_requests, desc="Processed prompts")
@@ -83,6 +119,11 @@ def generate(
     # This is necessary because some requests may be finished earlier than
     # its previous requests.
     outputs = sorted(outputs, key=lambda x: int(x.seq_id))
+    if truncated_prompts or skipped_prompts:
+        print(
+            f"Prompt length guard: truncated={truncated_prompts}, skipped={skipped_prompts} "
+            f"(max_model_len={max_model_len}, requested_max_tokens={sampling_params.max_tokens})."
+        )
     return outputs
 
 
