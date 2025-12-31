@@ -16,9 +16,12 @@ from sarathi.core.datatypes.sequence import (
     SamplerOutputs,
     SequenceMetadata,
 )
+from sarathi.logger import init_logger
 from sarathi.model_executor.parallel_utils.tensor_parallel import (
     gather_from_tensor_model_parallel_region,
 )
+
+logger = init_logger(__name__)
 
 _SAMPLING_EPS = 1e-5
 _MAX_TOP_K_ROUND = 32
@@ -71,13 +74,15 @@ class Sampler(nn.Module):
 
         if not do_top_p and not do_top_k:
             probs = torch.softmax(logits, dim=-1, dtype=torch.float)
-            flashinfer_sample_result = _sample_with_flashinfer(probs).cpu()
+            flashinfer_sample_result = _sanitize_sampled_token_ids(
+                _sample_with_flashinfer(probs).view(-1), self.vocab_size
+            ).cpu()
         else:
             top_ps = torch.tensor(top_ps, dtype=logits.dtype, device=logits.device)
             top_ks = torch.tensor(top_ks, dtype=torch.int, device=logits.device)
 
-            flashinfer_sample_result = _top_k_top_p_with_flashinfer(
-                logits, top_ks, top_ps
+            flashinfer_sample_result = _sanitize_sampled_token_ids(
+                _top_k_top_p_with_flashinfer(logits, top_ks, top_ps), self.vocab_size
             ).cpu()
 
         return [
@@ -161,3 +166,26 @@ def _top_k_top_p_with_flashinfer(
 def _sample_with_flashinfer(probs: torch.Tensor) -> torch.Tensor:
     samples = flashinfer_sampling_from_probs(probs)
     return samples
+
+
+def _sanitize_sampled_token_ids(token_ids: torch.Tensor, vocab_size: int) -> torch.Tensor:
+    """Clamps invalid sampled token IDs to avoid downstream GPU index OOB.
+
+    In rare cases (e.g., NaNs in logits or a sampling kernel glitch), the sampler
+    may return token IDs outside [0, vocab_size). Those IDs will later be fed
+    back to the model as input tokens and can crash CUDA embedding/gather ops.
+    """
+    token_ids = token_ids.to(torch.long)
+    invalid = (token_ids < 0) | (token_ids >= vocab_size)
+    if torch.any(invalid):
+        num_invalid = int(invalid.sum().item())
+        # Synchronize only in the exceptional path to keep the fast path cheap.
+        min_id = int(token_ids.min().item())
+        max_id = int(token_ids.max().item())
+        logger.warning(
+            "Sampler produced out-of-range token ids "
+            f"(count={num_invalid}, min={min_id}, max={max_id}, vocab_size={vocab_size}); "
+            "replacing invalid ids with 0."
+        )
+        token_ids = torch.where(invalid, torch.zeros_like(token_ids), token_ids)
+    return token_ids
