@@ -8,7 +8,12 @@ from typing import Iterable, Mapping, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 
-from sarathi.time_balance.config import CSV_PATH, ENABLE_MODEL_CACHE, MODEL_CACHE_PATH
+from sarathi.time_balance.config import (
+    CSV_PATH,
+    ENABLE_MODEL_CACHE,
+    MODEL_CACHE_PATH,
+    TimePredictorTrainConfig,
+)
 INPUT_DIM = 6
 
 
@@ -19,7 +24,7 @@ def _read_select_stats_csv(csv_path: str) -> Tuple[torch.Tensor, torch.Tensor]:
     if not os.path.exists(csv_path):
         raise FileNotFoundError(
             f"CSV not found: {csv_path}. Please update `CSV_PATH` in "
-            f"{__file__} to point at your `select_stats_rank*.csv`."
+            "sarathi/time_balance/config.py to point at your `select_stats_rank*.csv`."
         )
 
     decode_tokens = []
@@ -123,16 +128,18 @@ class TimePredictor:
     def from_csv(
         csv_path: str = CSV_PATH,
         *,
-        seed: int = 0,
-        epochs: int = 500,
-        lr: float = 2e-3,
-        weight_decay: float = 1e-4,
-        hidden_sizes: Iterable[int] = (64, 32),
-        batch_size: int = 256,
-        device: Optional[torch.device] = None,
-        verbose: bool = True,
-        log_every: int = 1,
+        train_config: Optional[TimePredictorTrainConfig] = None,
     ) -> "TimePredictor":
+        cfg = train_config or TimePredictorTrainConfig()
+        seed = cfg.seed
+        epochs = cfg.epochs
+        lr = cfg.lr
+        weight_decay = cfg.weight_decay
+        hidden_sizes: Iterable[int] = cfg.hidden_sizes
+        batch_size = cfg.batch_size
+        verbose = cfg.verbose
+        log_every = cfg.log_every
+
         torch.manual_seed(seed)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
@@ -141,8 +148,10 @@ class TimePredictor:
         x = x.to(dtype=torch.float32)
         y = y.to(dtype=torch.float32)
 
-        if device is None:
+        if cfg.device is None:
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        else:
+            device = torch.device(cfg.device)
         if verbose:
             print(f"[TimePredictor] device={device}, epochs={epochs}, lr={lr}")
 
@@ -387,12 +396,9 @@ def _eval_mae(predictor: TimePredictor, csv_path: str) -> float:
 
 
 if __name__ == "__main__":
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     predictor = TimePredictor.from_csv(
         CSV_PATH,
-        device=device,
-        verbose=True,
-        log_every=1,
+        train_config=TimePredictorTrainConfig(verbose=True, log_every=1),
     )
 
     mae = _eval_mae(predictor, CSV_PATH)
