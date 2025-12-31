@@ -36,7 +36,7 @@ parallel_config = ParallelConfig(
 
 scheduler_config = OptSarathiSchedulerConfig(
     chunk_size=256,
-    max_num_seqs=10,
+    max_num_seqs=32,
     policy_name="aging",
 )
 
