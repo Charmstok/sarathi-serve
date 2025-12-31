@@ -1,3 +1,4 @@
+import time
 from abc import ABC, abstractmethod
 from typing import List
 
@@ -77,6 +78,11 @@ class BaseScheduler(ABC):
         self._iteration_id += 1
 
         if self.num_running_batches >= self.parallel_config.pipeline_parallel_size:
+            # 流水线已满，无法调度新 batch
+            # 但仍然对 waiting 队列排序，让 Aging 等策略持续生效
+            if self.waiting:
+                now = time.monotonic()
+                self.waiting = self.policy.sort_by_priority(now, self.waiting)
             return SchedulerOutputs(
                 self._iteration_id,
                 ignored_seq_ids=[],
