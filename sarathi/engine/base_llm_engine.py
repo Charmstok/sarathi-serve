@@ -1,5 +1,6 @@
 import copy
 import math
+import os
 import time
 from functools import partial
 from typing import Any, Dict, List, Optional, Tuple
@@ -143,6 +144,13 @@ class BaseLLMEngine:
 
         unset_cuda_visible_devices()
 
+        # Propagate key environment variables to Ray workers (Ray may not always
+        # inherit the driver's env in all deployment modes).
+        runtime_env = None
+        sampling_backend = os.environ.get("SARATHI_SAMPLING_BACKEND")
+        if sampling_backend is not None:
+            runtime_env = {"env_vars": {"SARATHI_SAMPLING_BACKEND": sampling_backend}}
+
         driver_ip = None
         for rank, (node_ip, _) in enumerate(resource_mapping):
             worker_class = ray.remote(
@@ -151,17 +159,14 @@ class BaseLLMEngine:
                 **ray_remote_kwargs,
             )(RayWorker)
 
+            options_kwargs: Dict[str, Any] = {
+                "max_concurrency": _MAX_WORKER_CONCURRENCY,
+            }
+            if runtime_env is not None:
+                options_kwargs["runtime_env"] = runtime_env
             if node_ip:
-                worker_class = worker_class.options(
-                    max_concurrency=_MAX_WORKER_CONCURRENCY,
-                    resources={
-                        node_ip: 0.01,
-                    },
-                )
-            else:
-                worker_class = worker_class.options(
-                    max_concurrency=_MAX_WORKER_CONCURRENCY,
-                )
+                options_kwargs["resources"] = {node_ip: 0.01}
+            worker_class = worker_class.options(**options_kwargs)
 
             if rank == 0:
                 if node_ip:

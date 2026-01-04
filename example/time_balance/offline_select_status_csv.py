@@ -1,3 +1,4 @@
+import os
 import datetime
 from tqdm import tqdm
 from typing import List
@@ -8,6 +9,11 @@ from sarathi import LLMEngine, SamplingParams, RequestOutput
 from sarathi.utils.prompt_utils import get_prompts_from_dataset
 
 BASE_OUTPUT_DIR = "./offline_inference_output"
+
+# 采样后端：
+# - flashinfer: 更快，但某些环境下可能触发 CUDA illegal memory access
+# - torch: 更稳（慢一些），用于稳定跑完/排查问题
+os.environ.setdefault("SARATHI_SAMPLING_BACKEND", "torch")
 
 # 是否对超出 `max_model_len` 的 prompt 做截断（left-truncate，保留末尾 tokens）。
 # - True: 不丢请求，但会改变 prompt 内容（更贴近“实际服务端截断”行为）
