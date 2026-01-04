@@ -14,7 +14,7 @@ from sarathi.time_balance.config import (
     MODEL_CACHE_PATH,
     TimePredictorTrainConfig,
 )
-INPUT_DIM = 6
+INPUT_DIM = 10
 
 
 BatchState = Mapping[str, Union[int, float, torch.Tensor]]
@@ -24,32 +24,42 @@ def _read_select_stats_csv(csv_path: str) -> Tuple[torch.Tensor, torch.Tensor]:
     if not os.path.exists(csv_path):
         raise FileNotFoundError(
             f"CSV not found: {csv_path}. Please update `CSV_PATH` in "
-            "sarathi/time_balance/config.py to point at your `select_stats_rank*.csv`."
+    "sarathi/time_balance/config.py to point at your `select_stats_rank*.csv`."
         )
 
     decode_tokens = []
-    decode_history_tokens = []
+    sum_decode_context_len = []
     batch_request_count = []
     prefill_tokens = []
     prefill_processed_tokens = []
+    gpu_mem_used_mb = []
+    gpu_mem_free_mb = []
+    cuda_allocated_mb = []
+    cuda_reserved_mb = []
     latency_ms = []
 
     with open(csv_path, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
+        fieldnames = set(reader.fieldnames or [])
         required = {
             "decode_tokens",
-            "decode_history_tokens",
+            "sum_decode_context_len",
             "batch_request_count",
             "prefill_tokens",
             "prefill_processed_tokens",
             "latency_ms",
         }
-        missing = required - set(reader.fieldnames or [])
+        missing = required - fieldnames
         if missing:
             raise ValueError(
                 f"CSV missing columns {sorted(missing)}: {csv_path}. "
                 f"Got columns: {reader.fieldnames}"
             )
+
+        has_gpu_mem_used_mb = "gpu_mem_used_mb" in fieldnames
+        has_gpu_mem_free_mb = "gpu_mem_free_mb" in fieldnames
+        has_cuda_allocated_mb = "cuda_allocated_mb" in fieldnames
+        has_cuda_reserved_mb = "cuda_reserved_mb" in fieldnames
 
         for row in reader:
             # Some CSVs may accidentally contain the header row again (e.g. concatenation).
@@ -59,10 +69,22 @@ def _read_select_stats_csv(csv_path: str) -> Tuple[torch.Tensor, torch.Tensor]:
                 continue
             try:
                 decode_tokens.append(float(row["decode_tokens"]))
-                decode_history_tokens.append(float(row["decode_history_tokens"]))
+                sum_decode_context_len.append(float(row["sum_decode_context_len"]))
                 batch_request_count.append(float(row["batch_request_count"]))
                 prefill_tokens.append(float(row["prefill_tokens"]))
                 prefill_processed_tokens.append(float(row["prefill_processed_tokens"]))
+                gpu_mem_used_mb.append(
+                    float(row["gpu_mem_used_mb"]) if has_gpu_mem_used_mb else 0.0
+                )
+                gpu_mem_free_mb.append(
+                    float(row["gpu_mem_free_mb"]) if has_gpu_mem_free_mb else 0.0
+                )
+                cuda_allocated_mb.append(
+                    float(row["cuda_allocated_mb"]) if has_cuda_allocated_mb else 0.0
+                )
+                cuda_reserved_mb.append(
+                    float(row["cuda_reserved_mb"]) if has_cuda_reserved_mb else 0.0
+                )
                 latency_ms.append(float(row["latency_ms"]))
             except (TypeError, ValueError) as e:
                 raise ValueError(
@@ -70,24 +92,33 @@ def _read_select_stats_csv(csv_path: str) -> Tuple[torch.Tensor, torch.Tensor]:
                 ) from e
 
     x_decode_tokens = torch.tensor(decode_tokens, dtype=torch.float64)
-    x_decode_history = torch.tensor(decode_history_tokens, dtype=torch.float64)
+    x_sum_decode_context_len = torch.tensor(sum_decode_context_len, dtype=torch.float64)
     x_batch_request_count = torch.tensor(batch_request_count, dtype=torch.float64)
     x_prefill = torch.tensor(prefill_tokens, dtype=torch.float64)
     x_prefill_processed = torch.tensor(prefill_processed_tokens, dtype=torch.float64)
+    x_gpu_mem_used_mb = torch.tensor(gpu_mem_used_mb, dtype=torch.float64)
+    x_gpu_mem_free_mb = torch.tensor(gpu_mem_free_mb, dtype=torch.float64)
+    x_cuda_allocated_mb = torch.tensor(cuda_allocated_mb, dtype=torch.float64)
+    x_cuda_reserved_mb = torch.tensor(cuda_reserved_mb, dtype=torch.float64)
     y_latency = torch.tensor(latency_ms, dtype=torch.float64)
 
     ones = torch.ones_like(x_decode_tokens)
 
-    # 设计矩阵列顺序严格对应数学模型:
-    # [1, decode_history_tokens, decode_tokens, batch_request_count, prefill_tokens, prefill_processed_tokens]
+    # 特征列顺序（训练/预测必须保持一致）:
+    # [1, sum_decode_context_len, decode_tokens, batch_request_count, prefill_tokens, prefill_processed_tokens,
+    #  gpu_mem_used_mb, gpu_mem_free_mb, cuda_allocated_mb, cuda_reserved_mb]
     x = torch.stack(
         [
             ones,
-            x_decode_history,
+            x_sum_decode_context_len,
             x_decode_tokens,
             x_batch_request_count,
             x_prefill,
             x_prefill_processed,
+            x_gpu_mem_used_mb,
+            x_gpu_mem_free_mb,
+            x_cuda_allocated_mb,
+            x_cuda_reserved_mb,
         ],
         dim=1,
     )
@@ -299,7 +330,8 @@ class TimePredictor:
         if features.shape[-1] != INPUT_DIM:
             raise ValueError(
                 f"Expected features[..., {INPUT_DIM}] with columns "
-                "[1, decode_history, decode, batch_request_count, prefill, prefill_processed]. "
+                "[1, sum_decode_context_len, decode, batch_request_count, prefill, prefill_processed, "
+                "gpu_mem_used_mb, gpu_mem_free_mb, cuda_allocated_mb, cuda_reserved_mb]. "
                 f"Got shape {tuple(features.shape)}"
             )
         x = features.to(dtype=torch.float32)
@@ -318,21 +350,79 @@ class TimePredictor:
         self,
         *,
         decode_tokens: Union[int, float, torch.Tensor],
-        decode_history_tokens: Union[int, float, torch.Tensor],
+        sum_decode_context_len: Union[int, float, torch.Tensor],
         batch_request_count: Union[int, float, torch.Tensor],
         prefill_tokens: Union[int, float, torch.Tensor],
         prefill_processed_tokens: Union[int, float, torch.Tensor],
+        gpu_mem_used_mb: Union[int, float, torch.Tensor, None] = None,
+        gpu_mem_free_mb: Union[int, float, torch.Tensor, None] = None,
+        cuda_allocated_mb: Union[int, float, torch.Tensor, None] = None,
+        cuda_reserved_mb: Union[int, float, torch.Tensor, None] = None,
         device: Optional[torch.device] = None,
         dtype: torch.dtype = torch.float32,
     ) -> torch.Tensor:
+        if (
+            gpu_mem_used_mb is None
+            or gpu_mem_free_mb is None
+            or cuda_allocated_mb is None
+            or cuda_reserved_mb is None
+        ):
+            if torch.cuda.is_available():
+                device_idx = torch.cuda.current_device()
+                try:
+                    free_bytes, total_bytes = torch.cuda.mem_get_info(device_idx)
+                    used_mb = float(total_bytes - free_bytes) / (1024.0 * 1024.0)
+                    free_mb = float(free_bytes) / (1024.0 * 1024.0)
+                    alloc_mb = float(torch.cuda.memory_allocated(device_idx)) / (
+                        1024.0 * 1024.0
+                    )
+                    reserv_mb = float(torch.cuda.memory_reserved(device_idx)) / (
+                        1024.0 * 1024.0
+                    )
+                except Exception:
+                    used_mb, free_mb, alloc_mb, reserv_mb = 0.0, 0.0, 0.0, 0.0
+            else:
+                used_mb, free_mb, alloc_mb, reserv_mb = 0.0, 0.0, 0.0, 0.0
+
+            if gpu_mem_used_mb is None:
+                gpu_mem_used_mb = used_mb
+            if gpu_mem_free_mb is None:
+                gpu_mem_free_mb = free_mb
+            if cuda_allocated_mb is None:
+                cuda_allocated_mb = alloc_mb
+            if cuda_reserved_mb is None:
+                cuda_reserved_mb = reserv_mb
+
         dt = torch.as_tensor(decode_tokens, dtype=dtype, device=device)
-        dht = torch.as_tensor(decode_history_tokens, dtype=dtype, device=device)
+        sdcl = torch.as_tensor(sum_decode_context_len, dtype=dtype, device=device)
         brc = torch.as_tensor(batch_request_count, dtype=dtype, device=device)
         pt = torch.as_tensor(prefill_tokens, dtype=dtype, device=device)
         ppt = torch.as_tensor(prefill_processed_tokens, dtype=dtype, device=device)
-        dt, dht, brc, pt, ppt = torch.broadcast_tensors(dt, dht, brc, pt, ppt)
+        gmem_used = torch.as_tensor(gpu_mem_used_mb, dtype=dtype, device=device)
+        gmem_free = torch.as_tensor(gpu_mem_free_mb, dtype=dtype, device=device)
+        cuda_alloc = torch.as_tensor(cuda_allocated_mb, dtype=dtype, device=device)
+        cuda_resv = torch.as_tensor(cuda_reserved_mb, dtype=dtype, device=device)
+        dt, sdcl, brc, pt, ppt, gmem_used, gmem_free, cuda_alloc, cuda_resv = (
+            torch.broadcast_tensors(
+                dt, sdcl, brc, pt, ppt, gmem_used, gmem_free, cuda_alloc, cuda_resv
+            )
+        )
         ones = torch.ones_like(dt, dtype=dtype, device=dt.device)
-        features = torch.stack([ones, dht, dt, brc, pt, ppt], dim=-1)
+        features = torch.stack(
+            [
+                ones,
+                sdcl,
+                dt,
+                brc,
+                pt,
+                ppt,
+                gmem_used,
+                gmem_free,
+                cuda_alloc,
+                cuda_resv,
+            ],
+            dim=-1,
+        )
         return self.predict_from_features(features)
 
 
@@ -363,29 +453,34 @@ def F(batch_state: BatchState, *, csv_path: str = CSV_PATH) -> torch.Tensor:
     输入当前 Batch 状态，输出预测执行时间 T_pred (ms)。
 
     输入特征:
-      decode_tokens, decode_history_tokens, batch_request_count,
-      prefill_tokens, prefill_processed_tokens
+      decode_tokens, sum_decode_context_len, batch_request_count,
+      prefill_tokens, prefill_processed_tokens,
+      gpu_mem_used_mb/gpu_mem_free_mb/cuda_allocated_mb/cuda_reserved_mb(可选; 缺失时会尝试自动读取)
     """
     predictor = _get_predictor(csv_path)
 
     try:
         decode_tokens = batch_state["decode_tokens"]
-        decode_history_tokens = batch_state["decode_history_tokens"]
+        sum_decode_context_len = batch_state["sum_decode_context_len"]
         batch_request_count = batch_state["batch_request_count"]
         prefill_tokens = batch_state["prefill_tokens"]
         prefill_processed_tokens = batch_state["prefill_processed_tokens"]
     except KeyError as e:
         raise KeyError(
-            "batch_state must contain keys: decode_tokens, decode_history_tokens, "
+            "batch_state must contain keys: decode_tokens, sum_decode_context_len, "
             "batch_request_count, prefill_tokens, prefill_processed_tokens"
         ) from e
 
     return predictor.predict(
         decode_tokens=decode_tokens,
-        decode_history_tokens=decode_history_tokens,
+        sum_decode_context_len=sum_decode_context_len,
         batch_request_count=batch_request_count,
         prefill_tokens=prefill_tokens,
         prefill_processed_tokens=prefill_processed_tokens,
+        gpu_mem_used_mb=batch_state.get("gpu_mem_used_mb"),
+        gpu_mem_free_mb=batch_state.get("gpu_mem_free_mb"),
+        cuda_allocated_mb=batch_state.get("cuda_allocated_mb"),
+        cuda_reserved_mb=batch_state.get("cuda_reserved_mb"),
     )
 
 
@@ -407,10 +502,15 @@ if __name__ == "__main__":
 
     # Example usage
     batch = {
-        "decode_tokens": 28,
-        "decode_history_tokens": 2240,
-        "batch_request_count": 32,
-        "prefill_tokens": 228,
-        "prefill_processed_tokens": 179,
+        "decode_tokens": 2,
+        "sum_decode_context_len": 1026,
+        "batch_request_count": 4,
+        "prefill_tokens": 254,
+        "prefill_processed_tokens": 222,
+        "gpu_mem_used_mb": 20727.25,
+        "gpu_mem_free_mb": 3394.9325,
+        "cuda_allocated_mb": 16867.1176,
+        "cuda_reserved_mb": 16962.0,
     }
+    # 2,1060,4,254,222,20727.25,3394.9375,16867.11767578125,16962.0,70.52886199951172
     print("T_pred_ms =", F(batch).item())

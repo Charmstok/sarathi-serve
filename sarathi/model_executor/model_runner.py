@@ -272,7 +272,7 @@ class ModelRunner:
 
         batch_request_count = len(seq_metadata_list)
         decode_tokens = 0
-        decode_history_tokens = 0
+        sum_decode_context_len = 0
         prefill_tokens = 0
         prefill_processed_tokens = 0
         for seq_metadata in seq_metadata_list:
@@ -283,7 +283,34 @@ class ModelRunner:
                 )
             else:
                 decode_tokens += 1
-                decode_history_tokens += seq_metadata.seq.get_len()
+                sum_decode_context_len += seq_metadata.seq.get_len()
+
+        gpu_mem_used_mb = 0.0
+        gpu_mem_free_mb = 0.0
+        cuda_allocated_mb = 0.0
+        cuda_reserved_mb = 0.0
+        if self.device.type == "cuda" and torch.cuda.is_available():
+            try:
+                device_idx = (
+                    self.device.index
+                    if isinstance(self.device, torch.device)
+                    and self.device.index is not None
+                    else torch.cuda.current_device()
+                )
+                free_bytes, total_bytes = torch.cuda.mem_get_info(device_idx)
+                gpu_mem_used_mb = float(total_bytes - free_bytes) / (1024.0 * 1024.0)
+                gpu_mem_free_mb = float(free_bytes) / (1024.0 * 1024.0)
+                cuda_allocated_mb = float(torch.cuda.memory_allocated(device_idx)) / (
+                    1024.0 * 1024.0
+                )
+                cuda_reserved_mb = float(torch.cuda.memory_reserved(device_idx)) / (
+                    1024.0 * 1024.0
+                )
+            except Exception:
+                gpu_mem_used_mb = 0.0
+                gpu_mem_free_mb = 0.0
+                cuda_allocated_mb = 0.0
+                cuda_reserved_mb = 0.0
 
         collect_prefill_only = prefill_tokens != 0
         if collect_prefill_only:
@@ -323,10 +350,14 @@ class ModelRunner:
             try:
                 self._append_select_stats_csv_row(
                     decode_tokens=decode_tokens,
-                    decode_history_tokens=decode_history_tokens,
+                    sum_decode_context_len=sum_decode_context_len,
                     batch_request_count=batch_request_count,
                     prefill_tokens=prefill_tokens,
                     prefill_processed_tokens=prefill_processed_tokens,
+                    gpu_mem_used_mb=gpu_mem_used_mb,
+                    gpu_mem_free_mb=gpu_mem_free_mb,
+                    cuda_allocated_mb=cuda_allocated_mb,
+                    cuda_reserved_mb=cuda_reserved_mb,
                     latency_ms=latency_ms,
                 )
             except Exception:
@@ -343,10 +374,14 @@ class ModelRunner:
     def _append_select_stats_csv_row(
         self,
         decode_tokens: int,
-        decode_history_tokens: int,
+        sum_decode_context_len: int,
         batch_request_count: int,
         prefill_tokens: int,
         prefill_processed_tokens: int,
+        gpu_mem_used_mb: float,
+        gpu_mem_free_mb: float,
+        cuda_allocated_mb: float,
+        cuda_reserved_mb: float,
         latency_ms: float,
     ) -> None:
         csv_path = os.path.join(
@@ -363,20 +398,28 @@ class ModelRunner:
                 writer.writerow(
                     [
                         "decode_tokens",
-                        "decode_history_tokens",
+                        "sum_decode_context_len",
                         "batch_request_count",
                         "prefill_tokens",
                         "prefill_processed_tokens",
+                        "gpu_mem_used_mb",
+                        "gpu_mem_free_mb",
+                        "cuda_allocated_mb",
+                        "cuda_reserved_mb",
                         "latency_ms",
                     ]
                 )
             writer.writerow(
                 [
                     decode_tokens,
-                    decode_history_tokens,
+                    sum_decode_context_len,
                     batch_request_count,
                     prefill_tokens,
                     prefill_processed_tokens,
+                    gpu_mem_used_mb,
+                    gpu_mem_free_mb,
+                    cuda_allocated_mb,
+                    cuda_reserved_mb,
                     latency_ms,
                 ]
             )
