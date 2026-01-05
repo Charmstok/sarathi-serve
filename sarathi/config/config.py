@@ -278,6 +278,12 @@ class SarathiSchedulerConfig(BaseSchedulerConfig):
     chunk_schedule_stages: Optional[int] = field(
         default=None, metadata={"help": "Number of stages for chunk scheduling."}
     )
+    enable_select_stats_csv: bool = field(
+        default=False,
+        metadata={
+            "help": "在基准测试中启用该选项，以在模型执行前统计 seq_metadata_list 特征并写入 CSV：decode_tokens、prefill_tokens、prefill_processed_tokens、latency_ms。"
+        },
+    )
 
     def get_max_num_batched_tokens(self, max_model_len: int):
         # Sarathi never schedules more than chunk_size tokens in one iteration.

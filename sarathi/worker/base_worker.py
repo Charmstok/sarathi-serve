@@ -178,7 +178,8 @@ class BaseWorker:
         _, seq_metadata_list = self.seq_manager.on_schedule(scheduler_outputs)
 
         if (
-            self.config.scheduler_config.get_type() == SchedulerType.OPT_SARATHI
+            (self.config.scheduler_config.get_type() == SchedulerType.OPT_SARATHI
+             or self.config.scheduler_config.get_type() == SchedulerType.SARATHI)
             and self.config.scheduler_config.enable_select_stats_csv
         ):
             sampler_outputs = self.model_runner.run_with_select_csv(

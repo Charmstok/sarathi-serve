@@ -4,7 +4,7 @@ from tqdm import tqdm
 from typing import List
 
 from sarathi.config import ModelConfig, ParallelConfig, MetricsConfig, SystemConfig, WorkerConfig, \
-    ReplicaConfig, OptSarathiSchedulerConfig
+    ReplicaConfig, OptSarathiSchedulerConfig, SarathiSchedulerConfig
 from sarathi import LLMEngine, SamplingParams, RequestOutput
 from sarathi.utils.prompt_utils import get_prompts_from_dataset
 
@@ -24,7 +24,7 @@ TRUNCATE_OVERLONG_PROMPTS = True
 # 注意：这只是“预留空间”的下限，真正的每条请求 max_tokens 会在 generate() 中按预算动态裁剪。
 MIN_OUTPUT_TOKENS = 1
 
-prompts = get_prompts_from_dataset("dataset/ShareGPT_V3_unfiltered_cleaned_split.json", 1500, random_sample=True)
+prompts = get_prompts_from_dataset("dataset/ShareGPT_V3_unfiltered_cleaned_split.json", 200, random_sample=True)
 
 
 sampling_params = SamplingParams(temperature=0.8, top_p=0.95, max_tokens=512)
@@ -45,7 +45,7 @@ parallel_config = ParallelConfig(
     pipeline_parallel_size=1,
 )
 
-scheduler_config = OptSarathiSchedulerConfig(
+scheduler_config = SarathiSchedulerConfig(
     chunk_size=256,
     max_num_seqs=32,
     policy_name="fcfs",
