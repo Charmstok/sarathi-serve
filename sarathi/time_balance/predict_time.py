@@ -9,11 +9,16 @@ import torch
 import torch.nn as nn
 
 from sarathi.time_balance.config import (
+    BUCKET_SPLIT_CONFIG,
     CSV_PATH,
     ENABLE_MODEL_CACHE,
     MODEL_CACHE_PATH,
+    TEST_CSV_PATH,
     TimePredictorTrainConfig,
+    TRAIN_CSV_PATH,
+    VAL_CSV_PATH,
 )
+from sarathi.time_balance.bucket_split import _bucket_id, ensure_bucketed_splits
 INPUT_DIM = 10
 
 
@@ -156,8 +161,9 @@ class TimePredictor:
     hidden_sizes: Tuple[int, ...]
 
     @staticmethod
-    def from_csv(
-        csv_path: str = CSV_PATH,
+    def from_train_val_csv(
+        train_csv_path: str,
+        val_csv_path: str,
         *,
         train_config: Optional[TimePredictorTrainConfig] = None,
     ) -> "TimePredictor":
@@ -175,9 +181,47 @@ class TimePredictor:
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
 
-        x, y = _read_select_stats_csv(csv_path)
-        x = x.to(dtype=torch.float32)
-        y = y.to(dtype=torch.float32)
+        x_train, y_train = _read_select_stats_csv(train_csv_path)
+        x_val, y_val = _read_select_stats_csv(val_csv_path)
+        x_train = x_train.to(dtype=torch.float32)
+        y_train = y_train.to(dtype=torch.float32)
+        x_val = x_val.to(dtype=torch.float32)
+        y_val = y_val.to(dtype=torch.float32)
+
+        # 计算按 scheduled_tokens 分桶的样本权重（稀有桶权重大）。
+        w_train: Optional[torch.Tensor] = None
+        bucket: Optional[torch.Tensor] = None
+        if cfg.use_bucket_weights:
+            # feature 顺序: [1, sum_decode_context_len, decode_tokens, batch_request_count, prefill_tokens, ...]
+            decode = x_train[:, 2]
+            prefill = x_train[:, 4]
+            scheduled = torch.round(decode + prefill).to(torch.int64).clamp_min(0)
+
+            chunk_size = int(BUCKET_SPLIT_CONFIG.chunk_size)
+            bucket_size = int(BUCKET_SPLIT_CONFIG.bucket_size)
+            num_non_full = (chunk_size - 1) // bucket_size + 1
+            idx_eq = num_non_full
+            idx_gt = num_non_full + 1
+
+            bucket = torch.empty_like(scheduled)
+            mask_eq = scheduled == chunk_size
+            mask_gt = scheduled > chunk_size
+            mask_lt = ~mask_eq & ~mask_gt
+            bucket[mask_eq] = idx_eq
+            bucket[mask_gt] = idx_gt
+            bucket[mask_lt] = torch.div(
+                scheduled[mask_lt], bucket_size, rounding_mode="floor"
+            )
+
+            counts = torch.bincount(bucket, minlength=idx_gt + 1).to(dtype=torch.float32)
+            w_train = 1.0 / counts[bucket].clamp_min(1.0)
+            if cfg.bucket_weight_power != 1.0:
+                w_train = w_train.pow(float(cfg.bucket_weight_power))
+            # 归一化到均值约 1，再裁剪避免极端值。
+            w_train = w_train * (w_train.numel() / w_train.sum().clamp_min(1e-12))
+            w_train = w_train.clamp(
+                min=float(cfg.min_sample_weight), max=float(cfg.max_sample_weight)
+            )
 
         if cfg.device is None:
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -185,46 +229,60 @@ class TimePredictor:
             device = torch.device(cfg.device)
         if verbose:
             print(f"[TimePredictor] device={device}, epochs={epochs}, lr={lr}")
+            if w_train is not None:
+                # 汇总每个分桶的归一化权重
+                bucket_weights: dict[str, float] = {}
+                unique_buckets = bucket.unique(sorted=True)
+                for b in unique_buckets:
+                    b_int = int(b.item())
+                    # 重建桶标签
+                    if b_int == idx_eq:
+                        label = f"eq_{chunk_size}"
+                    elif b_int == idx_gt:
+                        label = f"gt_{chunk_size}"
+                    else:
+                        start = b_int * bucket_size
+                        end = min(start + bucket_size - 1, chunk_size - 1)
+                        label = f"{start:03d}_{end:03d}"
+                    w_mask = (bucket == b)
+                    if w_mask.any():
+                        bucket_weights[label] = float(w_train[w_mask][0].item())
+                bw_str = ", ".join(f"{k}:{v:.3f}" for k, v in sorted(bucket_weights.items()))
+                print(
+                    f"[TimePredictor] weighted_train=on power={cfg.bucket_weight_power} "
+                    f"min_w={cfg.min_sample_weight} max_w={cfg.max_sample_weight} "
+                    f"bucket_w={{{ {bw_str} }}}"
+                )
 
         # Standardize features/targets for stable MLP training.
-        x_mean = x.mean(dim=0, keepdim=True)
-        x_std = x.std(dim=0, keepdim=True).clamp_min(1e-6)
-        y_mean = y.mean()
-        y_std = y.std().clamp_min(1e-6)
+        x_mean = x_train.mean(dim=0, keepdim=True)
+        x_std = x_train.std(dim=0, keepdim=True).clamp_min(1e-6)
+        y_mean = y_train.mean()
+        y_std = y_train.std().clamp_min(1e-6)
 
         # Keep the explicit intercept feature as a constant 1 after normalization.
         # Otherwise it becomes all-zeros due to std==0 and loses its meaning.
         x_mean[:, 0] = 0.0
         x_std[:, 0] = 1.0
 
-        x_norm = (x - x_mean) / x_std
-        y_norm = (y - y_mean) / y_std
-
-        # Train/val split.
-        n = x_norm.shape[0]
-        perm = torch.randperm(n)
-        split = max(int(n * 0.8), 1)
-        train_idx, val_idx = perm[:split], perm[split:]
-
-        x_train = x_norm[train_idx]
-        y_train = y_norm[train_idx]
-        x_val = x_norm[val_idx] if val_idx.numel() else None
-        y_val = y_norm[val_idx] if val_idx.numel() else None
+        x_train = (x_train - x_mean) / x_std
+        y_train = (y_train - y_mean) / y_std
+        x_val = (x_val - x_mean) / x_std
+        y_val = (y_val - y_mean) / y_std
         if verbose:
             print(
-                f"[TimePredictor] samples={n}, train={x_train.shape[0]}, val={0 if x_val is None else x_val.shape[0]}"
+                f"[TimePredictor] train={x_train.shape[0]}, val={x_val.shape[0]}"
             )
 
         hidden_sizes_tuple = tuple(int(h) for h in hidden_sizes)
         model = _MLPRegressor(
-            in_features=x.shape[1], hidden_sizes=hidden_sizes_tuple
+            in_features=x_train.shape[1], hidden_sizes=hidden_sizes_tuple
         ).to(
             device=device
         )
         optim = torch.optim.AdamW(
             model.parameters(), lr=lr, weight_decay=weight_decay
         )
-        loss_fn = nn.MSELoss()
 
         best_state: Optional[dict[str, torch.Tensor]] = None
         best_val_mae: float = float("inf")
@@ -235,6 +293,7 @@ class TimePredictor:
             order = torch.randperm(x_train.shape[0])
             x_train_shuf = x_train[order]
             y_train_shuf = y_train[order]
+            w_train_shuf = w_train[order] if w_train is not None else None
 
             epoch_loss = 0.0
             num_batches = 0
@@ -244,39 +303,35 @@ class TimePredictor:
                 yb = y_train_shuf[start:end].to(device=device)
 
                 pred = model(xb)
-                loss = loss_fn(pred, yb)
+                if w_train_shuf is None:
+                    loss = ((pred - yb) ** 2).mean()
+                else:
+                    wb = w_train_shuf[start:end].to(device=device)
+                    loss = (((pred - yb) ** 2) * wb).mean()
                 optim.zero_grad(set_to_none=True)
                 loss.backward()
                 optim.step()
                 epoch_loss += float(loss.detach().cpu().item())
                 num_batches += 1
 
-            val_mae = None
-            val_mae_ms = None
-            if x_val is not None:
-                model.eval()
-                with torch.no_grad():
-                    pred_val = model(x_val.to(device=device))
-                    val_mae = (pred_val - y_val.to(device=device)).abs().mean().item()
-                    val_mae_ms = val_mae * float(y_std.item())
-                    if val_mae < best_val_mae:
-                        best_val_mae = val_mae
-                        best_state = {
-                            k: v.detach().cpu().clone()
-                            for k, v in model.state_dict().items()
-                        }
+            model.eval()
+            with torch.no_grad():
+                pred_val = model(x_val.to(device=device))
+                val_mae = (pred_val - y_val.to(device=device)).abs().mean().item()
+                val_mae_ms = val_mae * float(y_std.item())
+                if val_mae < best_val_mae:
+                    best_val_mae = val_mae
+                    best_state = {
+                        k: v.detach().cpu().clone()
+                        for k, v in model.state_dict().items()
+                    }
 
             if verbose and (epoch % max(1, log_every) == 0):
                 avg_loss = epoch_loss / max(1, num_batches)
-                if val_mae is None:
-                    print(
-                        f"[TimePredictor] epoch={epoch}/{epochs} train_mse={avg_loss:.6f}"
-                    )
-                else:
-                    print(
-                        f"[TimePredictor] epoch={epoch}/{epochs} train_mse={avg_loss:.6f} "
-                        f"val_mae(norm)={val_mae:.6f} val_mae_ms={val_mae_ms:.3f} best={best_val_mae:.6f}"
-                    )
+                print(
+                    f"[TimePredictor] epoch={epoch}/{epochs} train_mse={avg_loss:.6f} "
+                    f"val_mae(norm)={val_mae:.6f} val_mae_ms={val_mae_ms:.3f} best={best_val_mae:.6f}"
+                )
 
         if best_state is not None:
             model.load_state_dict(best_state)
@@ -426,64 +481,6 @@ class TimePredictor:
         return self.predict_from_features(features)
 
 
-_CACHED: dict[str, TimePredictor] = {}
-
-
-def _get_predictor(csv_path: str = CSV_PATH) -> TimePredictor:
-    predictor = _CACHED.get(csv_path)
-    if predictor is None:
-        if ENABLE_MODEL_CACHE and os.path.exists(MODEL_CACHE_PATH):
-            try:
-                predictor = TimePredictor.load(MODEL_CACHE_PATH)
-            except Exception:
-                predictor = TimePredictor.from_csv(csv_path)
-        else:
-            predictor = TimePredictor.from_csv(csv_path)
-        if ENABLE_MODEL_CACHE:
-            try:
-                predictor.save(MODEL_CACHE_PATH)
-            except Exception:
-                pass
-        _CACHED[csv_path] = predictor
-    return predictor
-
-
-def F(batch_state: BatchState, *, csv_path: str = CSV_PATH) -> torch.Tensor:
-    """
-    输入当前 Batch 状态，输出预测执行时间 T_pred (ms)。
-
-    输入特征:
-      decode_tokens, sum_decode_context_len, batch_request_count,
-      prefill_tokens, prefill_processed_tokens,
-      gpu_mem_used_mb/gpu_mem_free_mb/cuda_allocated_mb/cuda_reserved_mb(可选; 缺失时会尝试自动读取)
-    """
-    predictor = _get_predictor(csv_path)
-
-    try:
-        decode_tokens = batch_state["decode_tokens"]
-        sum_decode_context_len = batch_state["sum_decode_context_len"]
-        batch_request_count = batch_state["batch_request_count"]
-        prefill_tokens = batch_state["prefill_tokens"]
-        prefill_processed_tokens = batch_state["prefill_processed_tokens"]
-    except KeyError as e:
-        raise KeyError(
-            "batch_state must contain keys: decode_tokens, sum_decode_context_len, "
-            "batch_request_count, prefill_tokens, prefill_processed_tokens"
-        ) from e
-
-    return predictor.predict(
-        decode_tokens=decode_tokens,
-        sum_decode_context_len=sum_decode_context_len,
-        batch_request_count=batch_request_count,
-        prefill_tokens=prefill_tokens,
-        prefill_processed_tokens=prefill_processed_tokens,
-        gpu_mem_used_mb=batch_state.get("gpu_mem_used_mb"),
-        gpu_mem_free_mb=batch_state.get("gpu_mem_free_mb"),
-        cuda_allocated_mb=batch_state.get("cuda_allocated_mb"),
-        cuda_reserved_mb=batch_state.get("cuda_reserved_mb"),
-    )
-
-
 def _eval_mae(predictor: TimePredictor, csv_path: str) -> float:
     x, y = _read_select_stats_csv(csv_path)
     yhat = predictor.predict_from_features(x.to(dtype=torch.float32))
@@ -491,26 +488,28 @@ def _eval_mae(predictor: TimePredictor, csv_path: str) -> float:
 
 
 if __name__ == "__main__":
-    predictor = TimePredictor.from_csv(
-        CSV_PATH,
-        train_config=TimePredictorTrainConfig(verbose=True, log_every=1),
+    ensure_bucketed_splits(
+        input_csv=CSV_PATH,
+        train_csv=TRAIN_CSV_PATH,
+        val_csv=VAL_CSV_PATH,
+        test_csv=TEST_CSV_PATH,
+        cfg=BUCKET_SPLIT_CONFIG,
     )
 
-    mae = _eval_mae(predictor, CSV_PATH)
-    print("[TimePredictor] train_mae_ms =", mae)
+    predictor = TimePredictor.from_train_val_csv(
+        TRAIN_CSV_PATH,
+        VAL_CSV_PATH,
+        train_config=TimePredictorTrainConfig(verbose=True, log_every=1),
+    )
+    if ENABLE_MODEL_CACHE:
+        if os.path.exists(MODEL_CACHE_PATH):
+            os.remove(MODEL_CACHE_PATH)
+        predictor.save(MODEL_CACHE_PATH)
+        print(f"[TimePredictor] saved model to {MODEL_CACHE_PATH}")
 
-
-    # Example usage
-    batch = {
-        "decode_tokens": 2,
-        "sum_decode_context_len": 1026,
-        "batch_request_count": 4,
-        "prefill_tokens": 254,
-        "prefill_processed_tokens": 222,
-        "gpu_mem_used_mb": 20727.25,
-        "gpu_mem_free_mb": 3394.9325,
-        "cuda_allocated_mb": 16867.1176,
-        "cuda_reserved_mb": 16962.0,
-    }
-    # 2,1060,4,254,222,20727.25,3394.9375,16867.11767578125,16962.0,70.52886199951172
-    print("T_pred_ms =", F(batch).item())
+    train_mae = _eval_mae(predictor, TRAIN_CSV_PATH)
+    val_mae = _eval_mae(predictor, VAL_CSV_PATH)
+    test_mae = _eval_mae(predictor, TEST_CSV_PATH)
+    print("[TimePredictor] train_mae_ms =", train_mae)
+    print("[TimePredictor] val_mae_ms   =", val_mae)
+    print("[TimePredictor] test_mae_ms  =", test_mae)
