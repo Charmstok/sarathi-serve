@@ -64,7 +64,7 @@ class AGING(Policy):
         now: float,
         seq: Sequence
     ) -> float:
-        time_weight = 588.0 * 0.3
+        time_weight = 125.0 * 0.3
         prompt_weight = -1.0
 
         return (
