@@ -35,9 +35,10 @@ parallel_config = ParallelConfig(
 )
 
 scheduler_config = OptSarathiSchedulerConfig(
-    chunk_size=256,
+    target_time= 100.0,
     max_num_seqs=10,
     policy_name="aging",
+    enable_select_stats_csv=True
 )
 
 metrics_config = MetricsConfig(
@@ -46,7 +47,7 @@ metrics_config = MetricsConfig(
 )
 
 worker_config = WorkerConfig(
-    # gpu_memory_utilization=0.8
+    gpu_memory_utilization=0.7
 )
 
 system_config = SystemConfig(

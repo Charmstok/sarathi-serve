@@ -11,6 +11,8 @@ import zmq
 
 from sarathi.config import CacheConfig, ParallelConfig, SystemConfig
 from sarathi.core.datatypes.comm_info import CommInfo
+from sarathi.core.datatypes.model_step_result import ModelStepResult
+from sarathi.core.datatypes.runtime_stats import BatchRuntimeStats
 from sarathi.core.datatypes.scheduler_output import SchedulerOutputs
 from sarathi.core.datatypes.sequence import SamplerOutputs
 from sarathi.core.sequence_manager.worker_sequence_manager import WorkerSequenceManager
@@ -167,15 +169,52 @@ class BaseWorker:
     ) -> None:
         self.seq_manager.on_step_completed(scheduler_outputs, sampler_outputs)
 
+    def _collect_gpu_mem_stats(self) -> BatchRuntimeStats:
+        gpu_mem_used_mb = 0.0
+        gpu_mem_free_mb = 0.0
+        cuda_allocated_mb = 0.0
+        cuda_reserved_mb = 0.0
+        if self.device.type == "cuda" and torch.cuda.is_available():
+            try:
+                device_idx = (
+                    self.device.index
+                    if isinstance(self.device, torch.device)
+                    and self.device.index is not None
+                    else torch.cuda.current_device()
+                )
+                free_bytes, total_bytes = torch.cuda.mem_get_info(device_idx)
+                gpu_mem_used_mb = float(total_bytes - free_bytes) / (1024.0 * 1024.0)
+                gpu_mem_free_mb = float(free_bytes) / (1024.0 * 1024.0)
+                cuda_allocated_mb = float(torch.cuda.memory_allocated(device_idx)) / (
+                    1024.0 * 1024.0
+                )
+                cuda_reserved_mb = float(torch.cuda.memory_reserved(device_idx)) / (
+                    1024.0 * 1024.0
+                )
+            except Exception:
+                gpu_mem_used_mb = 0.0
+                gpu_mem_free_mb = 0.0
+                cuda_allocated_mb = 0.0
+                cuda_reserved_mb = 0.0
+
+        return BatchRuntimeStats(
+            gpu_mem_used_mb=gpu_mem_used_mb,
+            gpu_mem_free_mb=gpu_mem_free_mb,
+            cuda_allocated_mb=cuda_allocated_mb,
+            cuda_reserved_mb=cuda_reserved_mb,
+        )
+
     @torch.inference_mode()
     def execute_model(
         self,
         scheduler_outputs: SchedulerOutputs,
-    ) -> Optional[SamplerOutputs]:
+    ) -> Optional[ModelStepResult]:
         torch.cuda.synchronize()
         batch_stage_start_time = time.monotonic()
 
         _, seq_metadata_list = self.seq_manager.on_schedule(scheduler_outputs)
+
+        runtime_stats = self._collect_gpu_mem_stats()
 
         if (
             (self.config.scheduler_config.get_type() == SchedulerType.OPT_SARATHI
@@ -190,7 +229,8 @@ class BaseWorker:
                 seq_metadata_list,
             )
 
-        self.on_step_completed(scheduler_outputs, sampler_outputs)
+        if sampler_outputs is not None:
+            self.on_step_completed(scheduler_outputs, sampler_outputs)
 
         torch.cuda.synchronize()
 
@@ -205,7 +245,7 @@ class BaseWorker:
             batch_stage_end_time,
         )
 
-        return sampler_outputs
+        return ModelStepResult(sampler_outputs=sampler_outputs, runtime_stats=runtime_stats)
 
     @exit_on_error
     def _execution_loop(self) -> None:

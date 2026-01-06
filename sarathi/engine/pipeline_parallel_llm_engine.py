@@ -10,6 +10,7 @@ from sarathi.config import SystemConfig
 from sarathi.core.datatypes.request_output import RequestOutput
 from sarathi.core.datatypes.scheduler_output import SchedulerOutputs
 from sarathi.core.datatypes.sequence import SamplerOutputs, SequenceMetadata
+from sarathi.core.datatypes.model_step_result import ModelStepResult
 from sarathi.core.datatypes.step_inputs import StepInputs
 from sarathi.engine.base_llm_engine import BaseLLMEngine
 from sarathi.logger import init_logger
@@ -162,7 +163,15 @@ class PipelineParallelLLMEngine(BaseLLMEngine):
         while True:
             scheduler_stage_output = self.scheduler_output_queue.get()
 
-            sampler_outputs = self.output_socket.recv_pyobj()
+            step_result = self.output_socket.recv_pyobj()
+            if isinstance(step_result, ModelStepResult):
+                sampler_outputs = step_result.sampler_outputs
+                if step_result.runtime_stats is not None:
+                    self.scheduler.update_runtime_stats(step_result.runtime_stats)
+            else:
+                sampler_outputs = step_result
+
+            assert sampler_outputs is not None
 
             self._append_pending_step_output(
                 scheduler_stage_output.scheduler_outputs, sampler_outputs

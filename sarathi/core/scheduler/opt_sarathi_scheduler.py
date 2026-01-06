@@ -1,4 +1,5 @@
 import time
+import os
 from typing import List
 
 import numpy as np
@@ -14,8 +15,11 @@ from sarathi.core.block_space_manager.sarathi_block_space_manager import (
 )
 from sarathi.core.datatypes.scheduler_output import SchedulerOutputs
 from sarathi.core.datatypes.sequence import Sequence, SequenceScheduleMetadata
+from sarathi.core.chunk_search import ChunkSearchFactory
 from sarathi.core.scheduler.base_scheduler import BaseScheduler
 from sarathi.logger import init_logger
+from sarathi.time_balance.config import MODEL_CACHE_PATH
+from sarathi.time_balance.predict_time import TimePredictor
 
 logger = init_logger(__name__)
 
@@ -32,6 +36,7 @@ class OptSarathiScheduler(BaseScheduler):
         super().__init__(model_config, scheduler_config, cache_config, parallel_config)
 
         self.chunk_size = self.scheduler_config.chunk_size
+        self.target_time = self.scheduler_config.target_time
         self.enable_dynamic_chunking_schedule = (
             self.scheduler_config.enable_dynamic_chunking_schedule
         )
@@ -52,6 +57,12 @@ class OptSarathiScheduler(BaseScheduler):
                 np.ceil(self.chunk_schedule_max_tokens / self.chunk_schedule_stages)
             )
 
+        assert os.path.exists(
+            MODEL_CACHE_PATH
+        ), f"TimePredictor cache missing: {MODEL_CACHE_PATH}"
+        self._time_predictor = TimePredictor.load(MODEL_CACHE_PATH)
+        self._chunk_search = ChunkSearchFactory.get_search("binary")
+
     def _compute_chunk_size_schedule(self):
         # 使用 numpy 生成等差数列（ between low_chunk_size and high_chunk_size）
         chunk_sizes = np.linspace(
@@ -71,6 +82,73 @@ class OptSarathiScheduler(BaseScheduler):
 
     def get_block_space_manager_class(self):
         return SarathiBlockSpaceManager
+
+    def _predict_latency_ms(
+        self,
+        *,
+        decode_tokens: int,
+        sum_decode_context_len: int,
+        batch_request_count: int,
+        prefill_tokens: int,
+        prefill_processed_tokens: int,
+        gpu_mem_used_mb: float,
+        gpu_mem_free_mb: float,
+        cuda_allocated_mb: float,
+        cuda_reserved_mb: float,
+    ) -> float:
+        return float(
+            self._time_predictor.predict(
+                decode_tokens=decode_tokens,
+                sum_decode_context_len=sum_decode_context_len,
+                batch_request_count=batch_request_count,
+                prefill_tokens=prefill_tokens,
+                prefill_processed_tokens=prefill_processed_tokens,
+                gpu_mem_used_mb=gpu_mem_used_mb,
+                gpu_mem_free_mb=gpu_mem_free_mb,
+                cuda_allocated_mb=cuda_allocated_mb,
+                cuda_reserved_mb=cuda_reserved_mb,
+            ).item()
+        )
+
+    def _get_gpu_mem_features(self) -> tuple[float, float, float, float]:
+        stats = self.get_last_runtime_stats()
+        if stats is None:
+            return 0.0, 0.0, 0.0, 0.0
+        return (
+            float(stats.gpu_mem_used_mb),
+            float(stats.gpu_mem_free_mb),
+            float(stats.cuda_allocated_mb),
+            float(stats.cuda_reserved_mb),
+        )
+
+    def _get_seq_prefill_search_high(self, seq: Sequence, num_batched_tokens: int) -> int:
+        assert not seq.is_finished()
+
+        if self.enable_dynamic_chunking_schedule:
+            request_stage_idx = int(
+                np.ceil(
+                    seq.get_num_prompt_tokens_stage_processed()
+                    // self._tokens_per_stage
+                )
+            )
+            assert request_stage_idx < len(self._chunk_sizes)
+            chunk_size = self._chunk_sizes[request_stage_idx]
+        else:
+            chunk_size = self.chunk_size
+
+        remaining_budget = chunk_size - num_batched_tokens
+        if remaining_budget < self.min_chunk_threshold:
+            return 0
+
+        remaining_prompt = (
+            seq.get_prompt_len() - seq.get_num_prompt_tokens_stage_processed()
+        )
+        if remaining_prompt <= 0 or remaining_budget <= 0:
+            return 0
+
+        if remaining_budget < remaining_prompt:
+            return remaining_budget
+        return remaining_prompt
 
     # 计算当前请求在本轮迭代中应该运行多少个 token
     def _get_seq_next_num_prefill_tokens(
@@ -96,10 +174,13 @@ class OptSarathiScheduler(BaseScheduler):
         if remaining_budget < self.min_chunk_threshold:
             return 0
 
-        next_num_tokens = min(
-            seq.get_prompt_len() - seq.get_num_prompt_tokens_stage_processed(), # 剩余 prompt 长度
-            remaining_budget,                                                   # 剩余 budget（预算）
-        )
+        remaining_prompt = (
+            seq.get_prompt_len() - seq.get_num_prompt_tokens_stage_processed()
+        )  # 剩余 prompt 长度
+        if remaining_budget < remaining_prompt:
+            next_num_tokens = remaining_budget  # 剩余 budget（预算）
+        else:
+            next_num_tokens = remaining_prompt
 
         return next_num_tokens
 
@@ -113,6 +194,21 @@ class OptSarathiScheduler(BaseScheduler):
         scheduled_seq_metadata_list: List[SequenceScheduleMetadata] = []
 
         num_batched_tokens: int = 0
+        target_time_ms = float(self.scheduler_config.target_time)
+
+        (
+            gpu_mem_used_mb,
+            gpu_mem_free_mb,
+            cuda_allocated_mb,
+            cuda_reserved_mb,
+        ) = self._get_gpu_mem_features()
+
+        # --- Phase 0: 初始化当前 Batch 的基础负载 (用于增量预测) ---
+        current_decode_tokens = 0
+        current_sum_decode_context_len = 0
+        current_batch_request_count = 0
+        current_prefill_tokens = 0
+        current_prefill_processed_tokens = 0
 
         ######################################################################
         # 阶段 1：将已有的运行中序列组加入 batch。(处理正在运行的请求)
@@ -167,6 +263,9 @@ class OptSarathiScheduler(BaseScheduler):
                 scheduled_seq_metadata_list.append(
                     SequenceScheduleMetadata.from_sequence(seq)
                 )
+                current_decode_tokens += 1
+                current_sum_decode_context_len += seq.get_len()
+                current_batch_request_count += 1
 
         # 优先级2：处理已加入running列表，但只有部分chunk执行了prefill，没有完全执行完Prefill阶段的请求。
         # 现在加入尚未完成预填充的请求，这些预填充所需的内存早已分配完毕，
@@ -175,16 +274,42 @@ class OptSarathiScheduler(BaseScheduler):
             # 断言：确保这里面装的确实是还没跑完 Prefill 的任务
             assert not seq.prompt_stage_processing_finished
 
-            next_num_prefill_tokens = self._get_seq_next_num_prefill_tokens(
-                seq, num_batched_tokens
-            )
+            high = self._get_seq_prefill_search_high(seq, num_batched_tokens)
+            if high == 0:
+                running.append(seq)
+                continue
+
+            seq_processed = seq.get_num_prompt_tokens_stage_processed()
+
+            def feasible(chunk_size: int) -> bool:
+                predicted_ms = self._predict_latency_ms(
+                    decode_tokens=current_decode_tokens,
+                    sum_decode_context_len=current_sum_decode_context_len,
+                    batch_request_count=current_batch_request_count + 1,
+                    prefill_tokens=current_prefill_tokens + chunk_size,
+                    prefill_processed_tokens=(
+                        current_prefill_processed_tokens + seq_processed
+                    ),
+                    gpu_mem_used_mb=gpu_mem_used_mb,
+                    gpu_mem_free_mb=gpu_mem_free_mb,
+                    cuda_allocated_mb=cuda_allocated_mb,
+                    cuda_reserved_mb=cuda_reserved_mb,
+                )
+                return predicted_ms <= target_time_ms
+
+            next_num_prefill_tokens = self._chunk_search.max_true(1, high, feasible)
 
             # 如果本轮剩余 budget 不足（_get_seq_next_num_prefill_tokens 返回 0），
             # 先把该请求放回 running，保持占位，等下一轮再继续 prefill。
             # 在流水线场景或开启最小分块阈值时可能出现这种情况。
             if next_num_prefill_tokens == 0:
-                running.append(seq)
-                continue
+                # 避免 Prefill-only 场景下因为 target_time 过低导致永远调度不到 token（死锁）。
+                # 若当前 batch 还没有任何任务被调度，则强制至少推进 1 个 token。
+                if not scheduled_seq_metadata_list and high >= 1:
+                    next_num_prefill_tokens = 1
+                else:
+                    running.append(seq)
+                    continue
 
             num_batched_tokens += next_num_prefill_tokens
             scheduled_seq_metadata_list.append(
@@ -193,6 +318,9 @@ class OptSarathiScheduler(BaseScheduler):
                 )
             )
             running.append(seq)
+            current_prefill_tokens += next_num_prefill_tokens
+            current_prefill_processed_tokens += seq_processed
+            current_batch_request_count += 1
 
         # 优先级3：处理等待队列的新情求
         ######################################################################
@@ -227,14 +355,39 @@ class OptSarathiScheduler(BaseScheduler):
                 break
 
             # 计算这个新请求能分到多少 Budget
-            next_num_prefill_tokens = self._get_seq_next_num_prefill_tokens(
-                seq, num_batched_tokens
-            )
+            high = self._get_seq_prefill_search_high(seq, num_batched_tokens)
+            if high == 0:
+                break
+
+            seq_processed = seq.get_num_prompt_tokens_stage_processed()
+
+            def feasible(chunk_size: int) -> bool:
+                predicted_ms = self._predict_latency_ms(
+                    decode_tokens=current_decode_tokens,
+                    sum_decode_context_len=current_sum_decode_context_len,
+                    batch_request_count=current_batch_request_count + 1,
+                    prefill_tokens=current_prefill_tokens + chunk_size,
+                    prefill_processed_tokens=(
+                        current_prefill_processed_tokens + seq_processed
+                    ),
+                    gpu_mem_used_mb=gpu_mem_used_mb,
+                    gpu_mem_free_mb=gpu_mem_free_mb,
+                    cuda_allocated_mb=cuda_allocated_mb,
+                    cuda_reserved_mb=cuda_reserved_mb,
+                )
+                return predicted_ms <= target_time_ms
+
+            next_num_prefill_tokens = self._chunk_search.max_true(1, high, feasible)
 
             # 如果计算结果为 0，说明 num_batched_tokens 已经达到了 chunk_size
             # 此时停止接纳新请求
             if next_num_prefill_tokens == 0:
-                break
+                # 避免 Prefill-only 场景下因为 target_time 过低导致永远调度不到 token（死锁）。
+                # 若当前 batch 还没有任何任务被调度，则强制至少推进 1 个 token。
+                if not scheduled_seq_metadata_list and high >= 1:
+                    next_num_prefill_tokens = 1
+                else:
+                    break
 
             seq = self.waiting.pop(0)                       # 真正从等待队列中移除
             self._allocate(seq)                             # 在 Block Manager 中正式分配显存呢
@@ -245,6 +398,9 @@ class OptSarathiScheduler(BaseScheduler):
                 )
             )
             running.append(seq)                             # 加入本轮运行名单
+            current_prefill_tokens += next_num_prefill_tokens
+            current_prefill_processed_tokens += seq_processed
+            current_batch_request_count += 1
 
         # 将本轮构建好的 running 列表（包含 Phase 1 的未处理完的老请求和 Phase 2 的新请求）赋值给 self.running，作为系统的最新状态。
         self.running = running

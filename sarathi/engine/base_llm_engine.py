@@ -13,6 +13,7 @@ from sarathi.core.datatypes.request_output import RequestOutput
 from sarathi.core.datatypes.sampling_params import SamplingParams
 from sarathi.core.datatypes.scheduler_output import SchedulerOutputs
 from sarathi.core.datatypes.sequence import SamplerOutputs, Sequence, SequenceMetadata
+from sarathi.core.datatypes.model_step_result import ModelStepResult
 from sarathi.core.datatypes.step_inputs import StepInputs
 from sarathi.core.scheduler.scheduler_registry import SchedulerRegistry
 from sarathi.core.sequence_manager.engine_sequence_manager import EngineSequenceManager
@@ -392,7 +393,15 @@ class BaseLLMEngine:
                 new_seqs=self._get_new_seqs(),
             )
         )
-        sampler_outputs = self.output_socket.recv_pyobj()
+        step_result = self.output_socket.recv_pyobj()
+        if isinstance(step_result, ModelStepResult):
+            sampler_outputs = step_result.sampler_outputs
+            if step_result.runtime_stats is not None:
+                self.scheduler.update_runtime_stats(step_result.runtime_stats)
+        else:
+            sampler_outputs = step_result
+
+        assert sampler_outputs is not None
 
         return self._on_step_completed(
             scheduler_outputs,

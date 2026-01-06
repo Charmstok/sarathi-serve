@@ -1,10 +1,11 @@
 from abc import ABC, abstractmethod
-from typing import List
+from typing import List, Optional
 
 from sarathi.config import BaseSchedulerConfig, CacheConfig, ModelConfig, ParallelConfig
 from sarathi.core.block_space_manager.block_space_manager_registry import (
     BlockSpaceManagerRegistry,
 )
+from sarathi.core.datatypes.runtime_stats import BatchRuntimeStats
 from sarathi.core.datatypes.scheduler_output import SchedulerOutputs
 from sarathi.core.datatypes.sequence import Sequence, SequenceStatus
 from sarathi.core.policy import PolicyFactory
@@ -53,6 +54,8 @@ class BaseScheduler(ABC):
         # Sequence groups in the RUNNING state.
         self.running: List[Sequence] = []
 
+        self._last_runtime_stats: Optional[BatchRuntimeStats] = None
+
     def reset_state(self) -> None:
         self._iteration_id = -1
 
@@ -65,6 +68,12 @@ class BaseScheduler(ABC):
 
     def get_num_unfinished_seqs(self) -> int:
         return len(self.waiting) + len(self.running)
+
+    def update_runtime_stats(self, stats: BatchRuntimeStats) -> None:
+        self._last_runtime_stats = stats
+
+    def get_last_runtime_stats(self) -> Optional[BatchRuntimeStats]:
+        return self._last_runtime_stats
 
     @abstractmethod
     def _schedule(self) -> SchedulerOutputs:

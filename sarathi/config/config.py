@@ -301,6 +301,10 @@ class OptSarathiSchedulerConfig(BaseSchedulerConfig):
     chunk_size: int = field(
         default=512, metadata={"help": "Size of each chunk for Opt_Sarathi scheduler."}
     )
+    target_time: float = field(
+        default=100.0,
+        metadata={"help": "每个batch的执行时间的最大值"}
+    )
     enable_dynamic_chunking_schedule: bool = field(
         default=False, metadata={"help": "Enable dynamic chunking schedule."}
     )
