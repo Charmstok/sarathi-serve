@@ -6,7 +6,8 @@ from typing import Optional, Tuple
 
 # 训练用（同时也是 F() 默认使用的）select stats CSV 路径。
 CSV_PATH = (
-    "offline_inference_output/2026-01-05_15-51-09/replica_0/select_stats_rank0.csv"
+    # "offline_inference_output/2026-01-05_15-51-09/replica_0/select_stats_rank0.csv"
+    "offline_inference_output/2026-01-07_14-35-54/replica_0/select_stats_rank0.csv"
 )
 
 # 训练好的 MLP 预测器保存/加载路径。
@@ -86,12 +87,16 @@ class TimePredictorTrainConfig:
         metadata={"help": "AdamW 学习率。"}
     )
     weight_decay: float = field(
-        default=1e-4,
+        default=1e-3,
         metadata={"help": "AdamW 权重衰减（weight_decay）。"}
     )
     hidden_sizes: Tuple[int, ...] = field(
-        default=(64, 32),
+        default=(128, 64, 32),
         metadata={"help": "MLP 回归器隐藏层大小。"},
+    )
+    dropout: float = field(
+        default=0.1,
+        metadata={"help": "MLP Dropout 概率（0 表示关闭）。"},
     )
     batch_size: int = field(
         default=256,
@@ -141,3 +146,5 @@ class TimePredictorTrainConfig:
             raise ValueError("max_sample_weight must be > 0.")
         if self.min_sample_weight <= 0:
             raise ValueError("min_sample_weight must be > 0.")
+        if not (0.0 <= float(self.dropout) < 1.0):
+            raise ValueError("dropout must satisfy 0.0 <= dropout < 1.0.")

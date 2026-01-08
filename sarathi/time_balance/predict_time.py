@@ -136,6 +136,7 @@ class _MLPRegressor(nn.Module):
         self,
         in_features: int,
         hidden_sizes: Iterable[int] = (64, 32),
+        dropout: float = 0.0,
     ) -> None:
         super().__init__()
         layers: list[nn.Module] = []
@@ -143,6 +144,8 @@ class _MLPRegressor(nn.Module):
         for hidden in hidden_sizes:
             layers.append(nn.Linear(prev, hidden))
             layers.append(nn.ReLU())
+            if dropout and dropout > 0.0:
+                layers.append(nn.Dropout(p=float(dropout)))
             prev = hidden
         layers.append(nn.Linear(prev, 1))
         self.net = nn.Sequential(*layers)
@@ -159,6 +162,7 @@ class TimePredictor:
     y_mean: torch.Tensor
     y_std: torch.Tensor
     hidden_sizes: Tuple[int, ...]
+    dropout: float = 0.0
 
     @staticmethod
     def from_train_val_csv(
@@ -173,6 +177,7 @@ class TimePredictor:
         lr = cfg.lr
         weight_decay = cfg.weight_decay
         hidden_sizes: Iterable[int] = cfg.hidden_sizes
+        dropout = float(cfg.dropout)
         batch_size = cfg.batch_size
         verbose = cfg.verbose
         log_every = cfg.log_every
@@ -276,7 +281,9 @@ class TimePredictor:
 
         hidden_sizes_tuple = tuple(int(h) for h in hidden_sizes)
         model = _MLPRegressor(
-            in_features=x_train.shape[1], hidden_sizes=hidden_sizes_tuple
+            in_features=x_train.shape[1],
+            hidden_sizes=hidden_sizes_tuple,
+            dropout=dropout,
         ).to(
             device=device
         )
@@ -344,6 +351,7 @@ class TimePredictor:
             y_mean=y_mean.to(dtype=torch.float32, device="cpu"),
             y_std=y_std.to(dtype=torch.float32, device="cpu"),
             hidden_sizes=hidden_sizes_tuple,
+            dropout=dropout,
         )
 
     def save(self, path: str) -> None:
@@ -354,6 +362,7 @@ class TimePredictor:
             "y_mean": self.y_mean,
             "y_std": self.y_std,
             "hidden_sizes": self.hidden_sizes,
+            "dropout": float(getattr(self, "dropout", 0.0)),
             "in_features": INPUT_DIM,
         }
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
@@ -364,12 +373,20 @@ class TimePredictor:
         payload = torch.load(path, map_location="cpu")
         hidden_sizes = tuple(int(h) for h in payload["hidden_sizes"])
         in_features = int(payload.get("in_features", INPUT_DIM))
+        if "dropout" not in payload:
+            raise ValueError(
+                f"Incompatible cached model: missing 'dropout' field in {path}. "
+                f"Delete {path} to retrain."
+            )
+        dropout = float(payload["dropout"])
         if in_features != INPUT_DIM:
             raise ValueError(
                 f"Incompatible cached model: in_features={in_features}, expected {INPUT_DIM}. "
                 f"Delete {path} to retrain."
             )
-        model = _MLPRegressor(in_features=in_features, hidden_sizes=hidden_sizes)
+        model = _MLPRegressor(
+            in_features=in_features, hidden_sizes=hidden_sizes, dropout=dropout
+        )
         model.load_state_dict(payload["state_dict"])
         model.eval()
         return TimePredictor(
@@ -379,6 +396,7 @@ class TimePredictor:
             y_mean=payload["y_mean"].to(dtype=torch.float32, device="cpu"),
             y_std=payload["y_std"].to(dtype=torch.float32, device="cpu"),
             hidden_sizes=hidden_sizes,
+            dropout=dropout,
         )
 
     def predict_from_features(self, features: torch.Tensor) -> torch.Tensor:
