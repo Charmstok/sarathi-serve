@@ -37,6 +37,7 @@ class OptSarathiScheduler(BaseScheduler):
 
         self.chunk_size = self.scheduler_config.chunk_size
         self.target_time = self.scheduler_config.target_time
+        self.chunk_search_granularity = self.scheduler_config.chunk_search_granularity
         self.enable_dynamic_chunking_schedule = (
             self.scheduler_config.enable_dynamic_chunking_schedule
         )
@@ -61,7 +62,9 @@ class OptSarathiScheduler(BaseScheduler):
             MODEL_CACHE_PATH
         ), f"TimePredictor cache missing: {MODEL_CACHE_PATH}"
         self._time_predictor = TimePredictor.load(MODEL_CACHE_PATH)
-        self._chunk_search = ChunkSearchFactory.get_search("binary")
+        self._chunk_search = ChunkSearchFactory.get_search(
+            "grid", step=self.chunk_search_granularity
+        )
 
     def _compute_chunk_size_schedule(self):
         # 使用 numpy 生成等差数列（ between low_chunk_size and high_chunk_size）

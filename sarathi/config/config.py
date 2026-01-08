@@ -324,6 +324,10 @@ class OptSarathiSchedulerConfig(BaseSchedulerConfig):
     min_chunk_threshold: Optional[int] = field(
         default=0, metadata={"help": "最小分块阈值, token 预算低于这个值选择本轮不再填充新的 chunk."}
     )
+    chunk_search_granularity: int = field(
+        default=32,
+        metadata={"help": "分块试探粒度（token）。使用离散候选集合扫描，通常设为 32。"},
+    )
     enable_select_stats_csv: bool = field(
         default=False,
         metadata={
@@ -351,6 +355,8 @@ class OptSarathiSchedulerConfig(BaseSchedulerConfig):
                 "最小填充阈值(min_chunk_threshold) 必须小于 chunk_size 的 30%. 当前最小填充阈值为: "
                 f"{self.min_chunk_threshold}."
             )
+        if self.chunk_search_granularity <= 0:
+            raise ValueError("chunk_search_granularity must be > 0.")
 
 
 @dataclass

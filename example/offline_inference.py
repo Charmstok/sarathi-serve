@@ -9,7 +9,7 @@ from sarathi.utils.prompt_utils import *
 
 BASE_OUTPUT_DIR = "./offline_inference_output"
 
-PROMPTS_NUMBER = 100
+PROMPTS_NUMBER = 200
 
 prompts = get_prompts_from_dataset("dataset/ShareGPT_V3_unfiltered_cleaned_split.json", PROMPTS_NUMBER, random_sample=False)
 
@@ -31,16 +31,16 @@ parallel_config = ParallelConfig(
     pipeline_parallel_size=1,
 )
 
-# scheduler_config = OptSarathiSchedulerConfig(
-#     target_time=100.0,
+scheduler_config = OptSarathiSchedulerConfig(
+    target_time=100.0,
+    max_num_seqs=32,
+    enable_select_stats_csv=True,
+)
+# scheduler_config = SarathiSchedulerConfig(
+#     chunk_size=256,
 #     max_num_seqs=32,
 #     enable_select_stats_csv=True
 # )
-scheduler_config = SarathiSchedulerConfig(
-    chunk_size=256,
-    max_num_seqs=32,
-    enable_select_stats_csv=True
-)
 
 metrics_config = MetricsConfig(
     write_metrics=True,

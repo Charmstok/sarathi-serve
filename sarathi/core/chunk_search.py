@@ -13,10 +13,11 @@ class ChunkSearch(ABC):
         high: int,
         predicate: Callable[[int], bool],
     ) -> int:
-        """Return the maximum x in [low, high] such that predicate(x) is True.
+        """Return a chunk size in [low, high] that satisfies predicate.
 
-        Assumes predicate is monotonic: True...True, False...False.
-        Returns (low - 1) if predicate(low) is False.
+        Different implementations may have different assumptions:
+        - BinaryChunkSearch assumes predicate is monotonic (True...False).
+        - GridChunkSearch makes no monotonicity assumption and scans candidates.
         """
 
 
@@ -44,9 +45,40 @@ class BinaryChunkSearch(ChunkSearch):
         return lo
 
 
+class GridChunkSearch(ChunkSearch):
+    def __init__(self, *, step: int = 32) -> None:
+        if step <= 0:
+            raise ValueError("step must be > 0.")
+        self.step = int(step)
+
+    def max_true(
+        self,
+        low: int,
+        high: int,
+        predicate: Callable[[int], bool],
+    ) -> int:
+        if high < low:
+            return low - 1
+
+        candidates = {low, high}
+        step = self.step
+        first = ((low + step - 1) // step) * step
+        for x in range(first, high + 1, step):
+            candidates.add(x)
+
+        best = low - 1
+        for x in sorted(candidates):
+            if x < low or x > high:
+                continue
+            if predicate(x):
+                best = x
+        return best
+
+
 class ChunkSearchFactory:
     _SEARCH_REGISTRY = {
         "binary": BinaryChunkSearch,
+        "grid": GridChunkSearch,
     }
 
     @classmethod
