@@ -10,9 +10,6 @@ from sarathi.utils.prompt_utils import get_prompts_from_dataset
 
 BASE_OUTPUT_DIR = "./offline_inference_output"
 
-# 采样后端：
-# - flashinfer: 更快，但某些环境下可能触发 CUDA illegal memory access
-# - torch: 更稳（慢一些），用于稳定跑完/排查问题
 os.environ.setdefault("SARATHI_SAMPLING_BACKEND", "torch")
 
 prompts = get_prompts_from_dataset("dataset/ShareGPT_V3_unfiltered_cleaned_split.json", 2000, random_sample=True)
@@ -36,6 +33,8 @@ parallel_config = ParallelConfig(
     pipeline_parallel_size=1,
 )
 
+# 使用 Sarathi 调度器，将测试结果输出到 csv 文件中，
+# 使用这些数据进行训练，以让 OptSarathi 使用时间预算。
 scheduler_config = SarathiSchedulerConfig(
     chunk_size=256,
     max_num_seqs=32,
