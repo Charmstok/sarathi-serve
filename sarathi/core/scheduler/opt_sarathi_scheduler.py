@@ -46,7 +46,6 @@ class OptSarathiScheduler(BaseScheduler):
         self.high_chunk_size = self.scheduler_config.high_chunk_size
         self.chunk_schedule_max_tokens = self.scheduler_config.chunk_schedule_max_tokens
         self.chunk_schedule_stages = self.scheduler_config.chunk_schedule_stages
-        self.min_chunk_threshold = self.scheduler_config.min_chunk_threshold
 
         if self.enable_dynamic_chunking_schedule:
             assert self.chunk_schedule_stages > 0
@@ -140,8 +139,6 @@ class OptSarathiScheduler(BaseScheduler):
             chunk_size = self.chunk_size
 
         remaining_budget = chunk_size - num_batched_tokens
-        if remaining_budget < self.min_chunk_threshold:
-            return 0
 
         remaining_prompt = (
             seq.get_prompt_len() - seq.get_num_prompt_tokens_stage_processed()
@@ -174,8 +171,6 @@ class OptSarathiScheduler(BaseScheduler):
             chunk_size = self.chunk_size
 
         remaining_budget = chunk_size - num_batched_tokens
-        if remaining_budget < self.min_chunk_threshold:
-            return 0
 
         remaining_prompt = (
             seq.get_prompt_len() - seq.get_num_prompt_tokens_stage_processed()
