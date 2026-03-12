@@ -1,3 +1,4 @@
+import datetime
 from tqdm import tqdm
 from typing import List
 
@@ -5,6 +6,9 @@ from sarathi.config import ModelConfig, ParallelConfig, MetricsConfig, SystemCon
     ReplicaConfig, OptSarathiSchedulerConfig
 from sarathi import LLMEngine, SamplingParams, RequestOutput
 
+BASE_OUTPUT_DIR = "./offline_inference_output"
+
+output_dir = f"{BASE_OUTPUT_DIR}/{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}-ChatOnly"
 
 # Sample prompts.
 prompts = [
@@ -17,7 +21,7 @@ prompts = [
 sampling_params = SamplingParams(temperature=0.8, top_p=0.95, max_tokens=1024)
 
 replica_config = ReplicaConfig(
-
+    output_dir=output_dir,
 )
 
 model_config = ModelConfig(
@@ -36,7 +40,7 @@ scheduler_config = OptSarathiSchedulerConfig(
 )
 
 metrics_config = MetricsConfig(
-    write_metrics=False,
+    write_metrics=True,
     enable_chrome_trace=True,
 )
 
@@ -95,4 +99,7 @@ for output in outputs:
     print("-----------------------------------------------------------")
     print(f"Generated text: {generated_text!r}")
     print("===========================================================")
+
+llm_engine.pull_worker_metrics()
+llm_engine.plot_metrics()
 
