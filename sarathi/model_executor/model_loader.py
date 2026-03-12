@@ -20,6 +20,8 @@ _MODEL_REGISTRY = {
     "InternLMForCausalLM": InternLMForCausalLM,
     "MistralForCausalLM": MistralForCausalLM,
     "MixtralForCausalLM": MixtralForCausalLM,
+    "OpenPanguForCausalLM": OpenPanguForCausalLM,
+    "PanguEmbeddedForCausalLM": PanguEmbeddedForCausalLM,
     "QWenLMHeadModel": QWenLMHeadModel,
     "Qwen3ForCausalLM": Qwen3ForCausalLM,
     "YiForCausalLM": YiForCausalLM,

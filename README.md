@@ -52,6 +52,11 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
+### 额外适配的模型
+
+- Qwen3
+- openPangu(https://ai.gitcode.com/ascend-tribe/openPangu-Embedded-7B-V1.1)
+
 ### 如何使用本项目？
 
 #### 方式一: 简单对话

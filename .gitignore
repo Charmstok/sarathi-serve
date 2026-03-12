@@ -181,6 +181,9 @@ _build/
 *.swo
 *.swp
 
+# models
+models/
+
 # Custom
 datasets/**/*.json
 datasets/**/*.svg
