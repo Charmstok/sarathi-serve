@@ -3,6 +3,10 @@
 # Copyright (c) Microsoft Corporation.
 # Adapted from Sarathi-Serve Qwen implementation for Qwen3/Qwen2 architecture.
 
+"""仅用于推理的 qwen3 模型，兼容 Hugging Face 权重。
+
+该模型的输入被展平为一个一维的标记张量。
+"""
 from typing import Any, Dict, List, Optional
 
 import torch
