@@ -15,7 +15,7 @@ prompts = get_prompts_from_dataset("dataset/ShareGPT_V3_unfiltered_cleaned_split
 
 sampling_params = SamplingParams(temperature=0.8, top_p=0.95, max_tokens=512)
 
-output_dir = f"{BASE_OUTPUT_DIR}/{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+output_dir = f"{BASE_OUTPUT_DIR}/{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}-token预算-256tokens"
 
 replica_config = ReplicaConfig(
     output_dir=output_dir,
@@ -31,16 +31,11 @@ parallel_config = ParallelConfig(
     pipeline_parallel_size=1,
 )
 
-scheduler_config = OptSarathiSchedulerConfig(
-    target_time=100.0,
+scheduler_config = SarathiSchedulerConfig(
+    chunk_size=256,
     max_num_seqs=32,
-    enable_select_stats_csv=True,
+    enable_select_stats_csv=True
 )
-# scheduler_config = SarathiSchedulerConfig(
-#     chunk_size=256,
-#     max_num_seqs=32,
-#     enable_select_stats_csv=True
-# )
 
 metrics_config = MetricsConfig(
     write_metrics=True,
