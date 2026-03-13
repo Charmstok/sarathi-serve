@@ -9,6 +9,7 @@ from sarathi.model_executor.models.openpangu import (
 )
 from sarathi.model_executor.models.qwen import QWenLMHeadModel
 from sarathi.model_executor.models.yi import YiForCausalLM
+from sarathi.model_executor.models.qwen3 import Qwen3ForCausalLM
 
 __all__ = [
     "LlamaForCausalLM",
@@ -19,5 +20,6 @@ __all__ = [
     "FalconForCausalLM",
     "InternLMForCausalLM",
     "OpenPanguForCausalLM",
+    "Qwen3ForCausalLM",
     "PanguEmbeddedForCausalLM",
 ]

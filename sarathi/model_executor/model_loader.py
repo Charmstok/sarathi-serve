@@ -9,7 +9,6 @@ from transformers import PretrainedConfig
 
 from sarathi.config import ModelConfig
 from sarathi.model_executor.models import *  # pylint: disable=wildcard-import
-from sarathi.model_executor.models.qwen3 import Qwen3ForCausalLM
 from sarathi.model_executor.weight_utils import initialize_dummy_weights
 
 # TODO(woosuk): Lazy-load the model classes.
