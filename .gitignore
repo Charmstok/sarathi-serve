@@ -182,7 +182,7 @@ _build/
 *.swp
 
 # models
-models/
+/models/
 
 # Custom
 datasets/**/*.json
