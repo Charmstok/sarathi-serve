@@ -11,7 +11,7 @@ CSV_PATH = (
 )
 
 # 训练好的 MLP 预测器保存/加载路径。
-MODEL_CACHE_PATH = str(Path(__file__).resolve().parent / "time_predictor_mlp_v6.pt")
+MODEL_CACHE_PATH = str(Path(__file__).resolve().parent / "time_predictor_mlp_v7.pt")
 
 # 是否在 predict_time.py 中自动加载/保存 MODEL_CACHE_PATH。
 ENABLE_MODEL_CACHE = True
@@ -102,6 +102,14 @@ class TimePredictorTrainConfig:
         default=256,
         metadata={"help": "小批量大小（batch size）。"}
     )
+    huber_delta: float = field(
+        default=1.0,
+        metadata={"help": "Huber loss 的 delta（在标准化后的标签空间中）。"},
+    )
+    underpredict_weight: float = field(
+        default=2.0,
+        metadata={"help": "对低估延迟样本的额外惩罚系数，>=1。"},
+    )
     device: Optional[str] = field(
         default=None,
         metadata={
@@ -146,5 +154,9 @@ class TimePredictorTrainConfig:
             raise ValueError("max_sample_weight must be > 0.")
         if self.min_sample_weight <= 0:
             raise ValueError("min_sample_weight must be > 0.")
+        if self.huber_delta <= 0:
+            raise ValueError("huber_delta must be > 0.")
+        if self.underpredict_weight < 1.0:
+            raise ValueError("underpredict_weight must be >= 1.0.")
         if not (0.0 <= float(self.dropout) < 1.0):
             raise ValueError("dropout must satisfy 0.0 <= dropout < 1.0.")

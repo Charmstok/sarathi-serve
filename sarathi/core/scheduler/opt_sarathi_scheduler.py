@@ -93,6 +93,8 @@ class OptSarathiScheduler(BaseScheduler):
         batch_request_count: int,
         prefill_tokens: int,
         prefill_processed_tokens: int,
+        max_decode_context_len: int,
+        max_prefill_processed_tokens: int,
         gpu_mem_used_mb: float,
         gpu_mem_free_mb: float,
         cuda_allocated_mb: float,
@@ -105,6 +107,8 @@ class OptSarathiScheduler(BaseScheduler):
                 batch_request_count=batch_request_count,
                 prefill_tokens=prefill_tokens,
                 prefill_processed_tokens=prefill_processed_tokens,
+                max_decode_context_len=max_decode_context_len,
+                max_prefill_processed_tokens=max_prefill_processed_tokens,
                 gpu_mem_used_mb=gpu_mem_used_mb,
                 gpu_mem_free_mb=gpu_mem_free_mb,
                 cuda_allocated_mb=cuda_allocated_mb,
@@ -207,6 +211,8 @@ class OptSarathiScheduler(BaseScheduler):
         current_batch_request_count = 0
         current_prefill_tokens = 0
         current_prefill_processed_tokens = 0
+        current_max_decode_context_len = 0
+        current_max_prefill_processed_tokens = 0
 
         ######################################################################
         # 阶段 1：将已有的运行中序列组加入 batch。(处理正在运行的请求)
@@ -262,8 +268,12 @@ class OptSarathiScheduler(BaseScheduler):
                     SequenceScheduleMetadata.from_sequence(seq)
                 )
                 current_decode_tokens += 1
-                current_sum_decode_context_len += seq.get_len()
+                seq_context_len = seq.get_len()
+                current_sum_decode_context_len += seq_context_len
                 current_batch_request_count += 1
+                current_max_decode_context_len = max(
+                    current_max_decode_context_len, seq_context_len
+                )
 
         # 优先级2：处理已加入running列表，但只有部分chunk执行了prefill，没有完全执行完Prefill阶段的请求。
         # 现在加入尚未完成预填充的请求，这些预填充所需的内存早已分配完毕，
@@ -287,6 +297,10 @@ class OptSarathiScheduler(BaseScheduler):
                     prefill_tokens=current_prefill_tokens + chunk_size,
                     prefill_processed_tokens=(
                         current_prefill_processed_tokens + seq_processed
+                    ),
+                    max_decode_context_len=current_max_decode_context_len,
+                    max_prefill_processed_tokens=max(
+                        current_max_prefill_processed_tokens, seq_processed
                     ),
                     gpu_mem_used_mb=gpu_mem_used_mb,
                     gpu_mem_free_mb=gpu_mem_free_mb,
@@ -319,6 +333,9 @@ class OptSarathiScheduler(BaseScheduler):
             current_prefill_tokens += next_num_prefill_tokens
             current_prefill_processed_tokens += seq_processed
             current_batch_request_count += 1
+            current_max_prefill_processed_tokens = max(
+                current_max_prefill_processed_tokens, seq_processed
+            )
 
         # 优先级3：处理等待队列的新情求
         ######################################################################
@@ -368,6 +385,10 @@ class OptSarathiScheduler(BaseScheduler):
                     prefill_processed_tokens=(
                         current_prefill_processed_tokens + seq_processed
                     ),
+                    max_decode_context_len=current_max_decode_context_len,
+                    max_prefill_processed_tokens=max(
+                        current_max_prefill_processed_tokens, seq_processed
+                    ),
                     gpu_mem_used_mb=gpu_mem_used_mb,
                     gpu_mem_free_mb=gpu_mem_free_mb,
                     cuda_allocated_mb=cuda_allocated_mb,
@@ -399,6 +420,9 @@ class OptSarathiScheduler(BaseScheduler):
             current_prefill_tokens += next_num_prefill_tokens
             current_prefill_processed_tokens += seq_processed
             current_batch_request_count += 1
+            current_max_prefill_processed_tokens = max(
+                current_max_prefill_processed_tokens, seq_processed
+            )
 
         # 将本轮构建好的 running 列表（包含 Phase 1 的未处理完的老请求和 Phase 2 的新请求）赋值给 self.running，作为系统的最新状态。
         self.running = running

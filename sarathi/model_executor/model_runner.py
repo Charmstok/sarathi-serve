@@ -275,15 +275,25 @@ class ModelRunner:
         sum_decode_context_len = 0
         prefill_tokens = 0
         prefill_processed_tokens = 0
+        max_decode_context_len = 0
+        max_prefill_processed_tokens = 0
         for seq_metadata in seq_metadata_list:
             if seq_metadata.is_prompt:
-                prefill_tokens += seq_metadata.prompt_chunk_len
-                prefill_processed_tokens += (
+                seq_processed_tokens = (
                     seq_metadata.seq.get_num_prompt_tokens_stage_processed()
+                )
+                prefill_tokens += seq_metadata.prompt_chunk_len
+                prefill_processed_tokens += seq_processed_tokens
+                max_prefill_processed_tokens = max(
+                    max_prefill_processed_tokens, seq_processed_tokens
                 )
             else:
                 decode_tokens += 1
-                sum_decode_context_len += seq_metadata.seq.get_len()
+                seq_context_len = seq_metadata.seq.get_len()
+                sum_decode_context_len += seq_context_len
+                max_decode_context_len = max(
+                    max_decode_context_len, seq_context_len
+                )
 
         gpu_mem_used_mb = 0.0
         gpu_mem_free_mb = 0.0
@@ -354,6 +364,8 @@ class ModelRunner:
                     batch_request_count=batch_request_count,
                     prefill_tokens=prefill_tokens,
                     prefill_processed_tokens=prefill_processed_tokens,
+                    max_decode_context_len=max_decode_context_len,
+                    max_prefill_processed_tokens=max_prefill_processed_tokens,
                     gpu_mem_used_mb=gpu_mem_used_mb,
                     gpu_mem_free_mb=gpu_mem_free_mb,
                     cuda_allocated_mb=cuda_allocated_mb,
@@ -378,6 +390,8 @@ class ModelRunner:
         batch_request_count: int,
         prefill_tokens: int,
         prefill_processed_tokens: int,
+        max_decode_context_len: int,
+        max_prefill_processed_tokens: int,
         gpu_mem_used_mb: float,
         gpu_mem_free_mb: float,
         cuda_allocated_mb: float,
@@ -402,6 +416,8 @@ class ModelRunner:
                         "batch_request_count",
                         "prefill_tokens",
                         "prefill_processed_tokens",
+                        "max_decode_context_len",
+                        "max_prefill_processed_tokens",
                         "gpu_mem_used_mb",
                         "gpu_mem_free_mb",
                         "cuda_allocated_mb",
@@ -416,6 +432,8 @@ class ModelRunner:
                     batch_request_count,
                     prefill_tokens,
                     prefill_processed_tokens,
+                    max_decode_context_len,
+                    max_prefill_processed_tokens,
                     gpu_mem_used_mb,
                     gpu_mem_free_mb,
                     cuda_allocated_mb,
