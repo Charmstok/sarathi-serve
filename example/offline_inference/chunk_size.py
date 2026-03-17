@@ -10,7 +10,7 @@ from sarathi.utils.prompt_utils import *
 BASE_OUTPUT_DIR = "./offline_inference_output"
 
 PROMPTS_NUMBER = 200
-CHUNK_SIZE = 512
+CHUNK_SIZE = 256
 
 prompts = get_prompts_from_dataset("dataset/ShareGPT_V3_unfiltered_cleaned_split.json", PROMPTS_NUMBER, random_sample=False)
 

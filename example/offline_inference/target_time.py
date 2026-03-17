@@ -37,6 +37,7 @@ scheduler_config = OptSarathiSchedulerConfig(
     chunk_size=256,
     max_num_seqs=32,
     enable_select_stats_csv=True,
+    chunk_score_overflow_penalty=3.0,
 )
 
 metrics_config = MetricsConfig(

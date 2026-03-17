@@ -6,8 +6,7 @@ from typing import Optional, Tuple
 
 # 训练用（同时也是 F() 默认使用的）select stats CSV 路径。
 CSV_PATH = (
-    # "offline_inference_output/2026-01-05_15-51-09/replica_0/select_stats_rank0.csv"
-    "offline_inference_output/2026-01-07_14-35-54/replica_0/select_stats_rank0.csv"
+    "offline_inference_output/dataset/replica_0/select_stats_rank0.csv"
 )
 
 # 训练好的 MLP 预测器保存/加载路径。

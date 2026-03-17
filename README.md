@@ -62,7 +62,7 @@ pip install -e .
 #### 方式一: 简单对话
 
 ```shell
-python example/chat_only.py
+python example/chat/chat_only.py
 ```
 
 #### 方式二: 离线测试
@@ -70,7 +70,43 @@ python example/chat_only.py
 基准测试得到的各项指标可以在 offline_inference_output 目录下查看.
 
 ```shell
-python example/offline_inference.py
+python example/offline_inference/target_time.py
+```
+
+使用 target_time 前，请先按照以下说明获取时间预测模型：
+
+运行离线脚本：
+
+```shell
+python example/time_balance/offline_select_status_csv.py
+```
+
+它会用 `SarathiScheduler` 跑一批请求，并在模型执行阶段写出 `select_stats_rank0.csv`：
+
+> 说明：
+> - 脚本输出目录在 `offline_inference_output/<时间戳>/replica_0/`。
+> - 关键产物是 `select_stats_rank0.csv`（包含 `decode_tokens/prefill_tokens/.../latency_ms` 等特征与标签）。
+> - 若你改了脚本里的 `chunk_size/max_num_seqs/max_model_len` 等参数，建议在训练配置里保持一致（尤其是 `chunk_size`）。
+
+接下来，打开 `sarathi/time_balance/config.py`，按你刚生成的数据修改：
+- `CSV_PATH`：指向你最新目录下的 `select_stats_rank0.csv`
+- `MODEL_CACHE_PATH`：模型保存路径（默认在 `sarathi/time_balance/time_predictor_mlp_v6.pt`）
+- `BUCKET_SPLIT_CONFIG.chunk_size`：建议与数据采集时的 scheduler `chunk_size` 一致（默认 256）
+
+执行：
+
+```sh
+python sarathi/time_balance/predict_time.py
+```
+
+训练完成后会输出 train/val/test 的 MAE，并将模型写入 `MODEL_CACHE_PATH`。
+
+`OptSarathiScheduler` 会在初始化时从 `sarathi/time_balance/config.py` 的 `MODEL_CACHE_PATH` 加载模型；如果文件不存在会直接 `assert` 报错（确保线上不会静默退化）。
+
+可用下面脚本快速验证模型能否正确加载并预测：
+
+```sh
+python sarathi/time_balance/load_model.py
 ```
 
 #### 方式三: openai_entrypoints
