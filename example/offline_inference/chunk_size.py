@@ -10,12 +10,13 @@ from sarathi.utils.prompt_utils import *
 BASE_OUTPUT_DIR = "./offline_inference_output"
 
 PROMPTS_NUMBER = 200
+CHUNK_SIZE = 512
 
 prompts = get_prompts_from_dataset("dataset/ShareGPT_V3_unfiltered_cleaned_split.json", PROMPTS_NUMBER, random_sample=False)
 
 sampling_params = SamplingParams(temperature=0.8, top_p=0.95, max_tokens=512)
 
-output_dir = f"{BASE_OUTPUT_DIR}/{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}-token预算-256tokens"
+output_dir = f"{BASE_OUTPUT_DIR}/{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}-token预算-{CHUNK_SIZE}tokens"
 
 replica_config = ReplicaConfig(
     output_dir=output_dir,
@@ -32,7 +33,7 @@ parallel_config = ParallelConfig(
 )
 
 scheduler_config = SarathiSchedulerConfig(
-    chunk_size=256,
+    chunk_size=CHUNK_SIZE,
     max_num_seqs=32,
     enable_select_stats_csv=True
 )
