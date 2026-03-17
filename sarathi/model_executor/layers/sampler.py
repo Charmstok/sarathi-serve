@@ -216,17 +216,22 @@ def _sample_with_torch(
     top_ks: List[int],
     vocab_size: int,
 ) -> torch.Tensor:
-    # Keep sampling well-defined even if logits contain NaN/Inf.
-    if not torch.isfinite(logits).all():
-        logger.warning(
-            "Non-finite logits detected; replacing NaN/Inf with 0 before sampling."
-        )
-        logits = torch.nan_to_num(logits, nan=0.0, posinf=0.0, neginf=0.0)
+    non_finite_rows = ~torch.isfinite(logits).all(dim=-1)
 
     batch_size = logits.shape[0]
     token_ids: List[int] = []
 
     for i in range(batch_size):
+        if bool(non_finite_rows[i].item()):
+            seq = seq_metadata_list[i].seq
+            logger.warning(
+                "Non-finite logits detected for seq_id=%s; forcing EOS and "
+                "dropping this request from further generation.",
+                seq.seq_id,
+            )
+            token_ids.append(int(seq.eos_token_id))
+            continue
+
         row_logits = logits[i]
 
         temperature = seq_metadata_list[i].seq.sampling_params.temperature
