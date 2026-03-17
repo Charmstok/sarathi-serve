@@ -325,6 +325,14 @@ class OptSarathiSchedulerConfig(BaseSchedulerConfig):
         default=32,
         metadata={"help": "分块试探粒度（token）。使用离散候选集合扫描，通常设为 32。"},
     )
+    chunk_score_underfill_penalty: float = field(
+        default=1.0,
+        metadata={"help": "预测时间低于 target_time 时的欠填惩罚系数。"},
+    )
+    chunk_score_overflow_penalty: float = field(
+        default=2.0,
+        metadata={"help": "预测时间高于 target_time 时的超时惩罚系数。"},
+    )
     enable_select_stats_csv: bool = field(
         default=False,
         metadata={
@@ -349,6 +357,10 @@ class OptSarathiSchedulerConfig(BaseSchedulerConfig):
     def _verify_args(self) -> None:
         if self.chunk_search_granularity <= 0:
             raise ValueError("chunk_search_granularity must be > 0.")
+        if self.chunk_score_underfill_penalty <= 0:
+            raise ValueError("chunk_score_underfill_penalty must be > 0.")
+        if self.chunk_score_overflow_penalty <= 0:
+            raise ValueError("chunk_score_overflow_penalty must be > 0.")
 
 
 @dataclass

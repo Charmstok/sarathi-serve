@@ -20,6 +20,15 @@ class ChunkSearch(ABC):
         - GridChunkSearch makes no monotonicity assumption and scans candidates.
         """
 
+    @abstractmethod
+    def min_score(
+        self,
+        low: int,
+        high: int,
+        score_fn: Callable[[int], float],
+    ) -> int:
+        """Return a chunk size in [low, high] minimizing a scalar score."""
+
 
 class BinaryChunkSearch(ChunkSearch):
     def max_true(
@@ -43,6 +52,24 @@ class BinaryChunkSearch(ChunkSearch):
             else:
                 hi = mid - 1
         return lo
+
+    def min_score(
+        self,
+        low: int,
+        high: int,
+        score_fn: Callable[[int], float],
+    ) -> int:
+        if high < low:
+            return low - 1
+
+        best_x = low
+        best_score = float("inf")
+        for x in range(low, high + 1):
+            score = float(score_fn(x))
+            if score < best_score or (score == best_score and x > best_x):
+                best_score = score
+                best_x = x
+        return best_x
 
 
 class GridChunkSearch(ChunkSearch):
@@ -73,6 +100,32 @@ class GridChunkSearch(ChunkSearch):
             if predicate(x):
                 best = x
         return best
+
+    def min_score(
+        self,
+        low: int,
+        high: int,
+        score_fn: Callable[[int], float],
+    ) -> int:
+        if high < low:
+            return low - 1
+
+        candidates = {low, high}
+        step = self.step
+        first = ((low + step - 1) // step) * step
+        for x in range(first, high + 1, step):
+            candidates.add(x)
+
+        best_x = low
+        best_score = float("inf")
+        for x in sorted(candidates):
+            if x < low or x > high:
+                continue
+            score = float(score_fn(x))
+            if score < best_score or (score == best_score and x > best_x):
+                best_score = score
+                best_x = x
+        return best_x
 
 
 class ChunkSearchFactory:

@@ -38,6 +38,12 @@ class OptSarathiScheduler(BaseScheduler):
         self.chunk_size = self.scheduler_config.chunk_size
         self.target_time = self.scheduler_config.target_time
         self.chunk_search_granularity = self.scheduler_config.chunk_search_granularity
+        self.chunk_score_underfill_penalty = (
+            self.scheduler_config.chunk_score_underfill_penalty
+        )
+        self.chunk_score_overflow_penalty = (
+            self.scheduler_config.chunk_score_overflow_penalty
+        )
         self.enable_dynamic_chunking_schedule = (
             self.scheduler_config.enable_dynamic_chunking_schedule
         )
@@ -125,6 +131,20 @@ class OptSarathiScheduler(BaseScheduler):
             float(stats.gpu_mem_free_mb),
             float(stats.cuda_allocated_mb),
             float(stats.cuda_reserved_mb),
+        )
+
+    def _chunk_target_score(
+        self,
+        *,
+        predicted_ms: float,
+        target_time_ms: float,
+    ) -> float:
+        if predicted_ms <= target_time_ms:
+            return (
+                (target_time_ms - predicted_ms) * self.chunk_score_underfill_penalty
+            )
+        return (
+            (predicted_ms - target_time_ms) * self.chunk_score_overflow_penalty
         )
 
     def _get_seq_prefill_search_high(self, seq: Sequence, num_batched_tokens: int) -> int:
@@ -289,7 +309,7 @@ class OptSarathiScheduler(BaseScheduler):
 
             seq_processed = seq.get_num_prompt_tokens_stage_processed()
 
-            def feasible(chunk_size: int) -> bool:
+            def score(chunk_size: int) -> float:
                 predicted_ms = self._predict_latency_ms(
                     decode_tokens=current_decode_tokens,
                     sum_decode_context_len=current_sum_decode_context_len,
@@ -307,9 +327,12 @@ class OptSarathiScheduler(BaseScheduler):
                     cuda_allocated_mb=cuda_allocated_mb,
                     cuda_reserved_mb=cuda_reserved_mb,
                 )
-                return predicted_ms <= target_time_ms
+                return self._chunk_target_score(
+                    predicted_ms=predicted_ms,
+                    target_time_ms=target_time_ms,
+                )
 
-            next_num_prefill_tokens = self._chunk_search.max_true(1, high, feasible)
+            next_num_prefill_tokens = self._chunk_search.min_score(1, high, score)
 
             # 如果本轮剩余 budget 不足（_get_seq_next_num_prefill_tokens 返回 0），
             # 先把该请求放回 running，保持占位，等下一轮再继续 prefill。
@@ -376,7 +399,7 @@ class OptSarathiScheduler(BaseScheduler):
 
             seq_processed = seq.get_num_prompt_tokens_stage_processed()
 
-            def feasible(chunk_size: int) -> bool:
+            def score(chunk_size: int) -> float:
                 predicted_ms = self._predict_latency_ms(
                     decode_tokens=current_decode_tokens,
                     sum_decode_context_len=current_sum_decode_context_len,
@@ -394,9 +417,12 @@ class OptSarathiScheduler(BaseScheduler):
                     cuda_allocated_mb=cuda_allocated_mb,
                     cuda_reserved_mb=cuda_reserved_mb,
                 )
-                return predicted_ms <= target_time_ms
+                return self._chunk_target_score(
+                    predicted_ms=predicted_ms,
+                    target_time_ms=target_time_ms,
+                )
 
-            next_num_prefill_tokens = self._chunk_search.max_true(1, high, feasible)
+            next_num_prefill_tokens = self._chunk_search.min_score(1, high, score)
 
             # 如果计算结果为 0，说明 num_batched_tokens 已经达到了 chunk_size
             # 此时停止接纳新请求
