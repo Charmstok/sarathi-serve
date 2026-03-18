@@ -163,7 +163,9 @@ class PipelineParallelLLMEngine(BaseLLMEngine):
         while True:
             scheduler_stage_output = self.scheduler_output_queue.get()
 
-            step_result = self.output_socket.recv_pyobj()
+            step_result = self._recv_step_result(
+                scheduler_stage_output.scheduler_outputs
+            )
             if isinstance(step_result, ModelStepResult):
                 sampler_outputs = step_result.sampler_outputs
                 if step_result.runtime_stats is not None:

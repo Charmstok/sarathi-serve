@@ -29,6 +29,9 @@ from sarathi.utils.threading_utils import synchronized
 logger = init_logger(__name__)
 
 _MAX_WORKER_CONCURRENCY = 1
+_WORKER_OUTPUT_TIMEOUT_S = float(
+    os.environ.get("SARATHI_WORKER_OUTPUT_TIMEOUT_S", "120")
+)
 
 ModelParallelRank = Tuple[int, int]
 
@@ -122,6 +125,24 @@ class BaseLLMEngine:
         self.enqueue_socket.bind(f"tcp://*:{self.comm_info.enqueue_socket_port}")
         self.output_socket = self.zmq_context.socket(zmq.PULL)
         self.output_socket.bind(f"tcp://*:{self.comm_info.output_socket_port}")
+        self.output_socket.setsockopt(
+            zmq.RCVTIMEO,
+            int(_WORKER_OUTPUT_TIMEOUT_S * 1000),
+        )
+
+    def _recv_step_result(self, scheduler_outputs: SchedulerOutputs) -> Any:
+        try:
+            return self.output_socket.recv_pyobj()
+        except zmq.error.Again as exc:
+            raise RuntimeError(
+                "Timed out waiting for worker output after "
+                f"{_WORKER_OUTPUT_TIMEOUT_S:.1f}s "
+                f"(batch_id={scheduler_outputs.id}, "
+                f"scheduled={len(scheduler_outputs.scheduled_seq_metadata_list)}, "
+                f"ignored={len(scheduler_outputs.ignored_seq_ids)}, "
+                f"preempted={len(scheduler_outputs.preempted_seq_ids)}, "
+                f"seq_ids={scheduler_outputs.seq_ids[:8]})."
+            ) from exc
 
     def _validate_parallel_config(self) -> None:
         assert self.config.parallel_config.pipeline_parallel_size == 1
@@ -393,7 +414,7 @@ class BaseLLMEngine:
                 new_seqs=self._get_new_seqs(),
             )
         )
-        step_result = self.output_socket.recv_pyobj()
+        step_result = self._recv_step_result(scheduler_outputs)
         if isinstance(step_result, ModelStepResult):
             sampler_outputs = step_result.sampler_outputs
             if step_result.runtime_stats is not None:
