@@ -40,6 +40,10 @@ def _build_feature_tensor(
     cuda_allocated_mb: torch.Tensor,
     cuda_reserved_mb: torch.Tensor,
 ) -> torch.Tensor:
+    """将原始调度统计量拼接并扩展成模型输入的 16 维特征张量。"""
+
+    # 把原始调度统计量扩展成模型实际使用的 16 维特征。
+    # 这里除了直接输入原始字段，还额外构造了一些交叉项，帮助 MLP 更容易拟合延迟模式。
     scheduled_tokens = decode_tokens + prefill_tokens
     avg_decode_ctx = sum_decode_context_len / decode_tokens.clamp_min(1.0)
     decode_ctx_interaction = decode_tokens * avg_decode_ctx
@@ -77,6 +81,12 @@ def _weighted_asymmetric_huber_loss(
     underpredict_weight: float,
     sample_weight: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
+    """计算带样本权重、且对低估更敏感的 Huber 回归损失。"""
+    
+    # 使用非对称 Huber loss：
+    # 1. Huber 比纯 MSE 对异常值更稳健；
+    # 2. 当预测值低于真实值时，施加更大的惩罚，降低“低估延迟”的风险；
+    # 3. 可叠加样本权重，让稀有桶样本在训练时更重要。
     error = pred - target
     abs_error = error.abs()
     delta_tensor = torch.as_tensor(delta, dtype=pred.dtype, device=pred.device)
@@ -101,6 +111,7 @@ def _weighted_asymmetric_huber_loss(
 
 
 def _read_select_stats_csv(csv_path: str) -> Tuple[torch.Tensor, torch.Tensor]:
+    """从训练/验证 CSV 读取样本，并返回特征张量和延迟标签。"""
     if not os.path.exists(csv_path):
         raise FileNotFoundError(
             f"CSV not found: {csv_path}. Please update `CSV_PATH` in "
@@ -146,6 +157,7 @@ def _read_select_stats_csv(csv_path: str) -> Tuple[torch.Tensor, torch.Tensor]:
         has_cuda_reserved_mb = "cuda_reserved_mb" in fieldnames
 
         for row in reader:
+            # 兼容被拼接过的 CSV：中间若混入重复表头或空行，直接跳过。
             # Some CSVs may accidentally contain the header row again (e.g. concatenation).
             if row.get("decode_tokens") == "decode_tokens":
                 continue
@@ -210,17 +222,23 @@ def _read_select_stats_csv(csv_path: str) -> Tuple[torch.Tensor, torch.Tensor]:
         cuda_reserved_mb=x_cuda_reserved_mb,
     )
 
+    # x 是模型输入特征，y 是监督信号 latency_ms。
     return x, y_latency
 
 
 class _MLPRegressor(nn.Module):
+    """用于延迟回归的轻量级多层感知机。"""
+
     def __init__(
         self,
         in_features: int,
         hidden_sizes: Iterable[int] = (64, 32),
         dropout: float = 0.0,
     ) -> None:
+        """按给定输入维度、隐藏层配置和 dropout 构建 MLP。"""
         super().__init__()
+        # 一个标准的多层感知机回归器：
+        # Linear -> ReLU -> (Dropout) -> ... -> Linear(1)
         layers: list[nn.Module] = []
         prev = in_features
         for hidden in hidden_sizes:
@@ -230,14 +248,17 @@ class _MLPRegressor(nn.Module):
                 layers.append(nn.Dropout(p=float(dropout)))
             prev = hidden
         layers.append(nn.Linear(prev, 1))
-        self.net = nn.Sequential(*layers)
+        self.net = nn.Sequential(*layers) # “*”解包 --- 把列表解包成多个独立参数
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """对一批特征做前向传播，返回一维回归结果。"""
         return self.net(x).squeeze(-1)
 
 
 @dataclass(frozen=True)
 class TimePredictor:
+    """封装训练好的延迟预测模型及其标准化参数。"""
+
     model: nn.Module
     x_mean: torch.Tensor
     x_std: torch.Tensor
@@ -253,6 +274,9 @@ class TimePredictor:
         *,
         train_config: Optional[TimePredictorTrainConfig] = None,
     ) -> "TimePredictor":
+        """从训练集和验证集 CSV 训练模型，并返回可直接推理的预测器。"""
+        # 这个静态方法就是完整的训练入口：
+        # 读数据 -> 标准化 -> 构建模型 -> 训练 -> 选最佳验证集权重 -> 返回 predictor。
         cfg = train_config or TimePredictorTrainConfig()
         seed = cfg.seed
         epochs = cfg.epochs
@@ -277,7 +301,8 @@ class TimePredictor:
         x_val = x_val.to(dtype=torch.float32)
         y_val = y_val.to(dtype=torch.float32)
 
-        # 计算按 scheduled_tokens 分桶的样本权重（稀有桶权重大）。
+        # 按 scheduled_tokens 分桶，并给稀有桶更高权重。
+        # 这样可以避免训练被高频桶主导，提升长尾场景的拟合能力。
         w_train: Optional[torch.Tensor] = None
         bucket: Optional[torch.Tensor] = None
         if cfg.use_bucket_weights:
@@ -346,14 +371,14 @@ class TimePredictor:
                     f"bucket_w={{{ {bw_str} }}}"
                 )
 
-        # Standardize features/targets for stable MLP training.
+        # 对输入和标签做标准化，减小不同量纲的影响，让 MLP 更容易训练稳定。
         x_mean = x_train.mean(dim=0, keepdim=True)
         x_std = x_train.std(dim=0, keepdim=True).clamp_min(1e-6)
         y_mean = y_train.mean()
         y_std = y_train.std().clamp_min(1e-6)
 
-        # Keep the explicit intercept feature as a constant 1 after normalization.
-        # Otherwise it becomes all-zeros due to std==0 and loses its meaning.
+        # 第一列是显式常数项（intercept feature），标准化后仍保留为常数 1。
+        # 否则它会因为方差为 0 被压成全 0，失去“偏置项”的作用。
         x_mean[:, 0] = 0.0
         x_std[:, 0] = 1.0
 
@@ -374,6 +399,7 @@ class TimePredictor:
         ).to(
             device=device
         )
+        # AdamW 用于优化 MLP 参数；weight_decay 相当于 L2 正则的一种实现。
         optim = torch.optim.AdamW(
             model.parameters(), lr=lr, weight_decay=weight_decay
         )
@@ -381,9 +407,11 @@ class TimePredictor:
         best_state: Optional[dict[str, torch.Tensor]] = None
         best_val_mae: float = float("inf")
 
+        # 训练模型
         for epoch in range(1, max(1, epochs) + 1):
             model.train()
-            # Simple mini-batching without DataLoader to keep deps minimal.
+            # 训练时每个 epoch 打乱样本顺序，然后手工做 mini-batch。
+            # 这里没有引入 DataLoader，逻辑更直接，依赖也更少。
             order = torch.randperm(x_train.shape[0])
             x_train_shuf = x_train[order]
             y_train_shuf = y_train[order]
@@ -396,6 +424,8 @@ class TimePredictor:
                 xb = x_train_shuf[start:end].to(device=device)
                 yb = y_train_shuf[start:end].to(device=device)
 
+                # 标准的 PyTorch 训练闭环：
+                # 前向计算 -> loss -> 清梯度 -> 反向传播 -> 参数更新。
                 pred = model(xb)
                 wb = (
                     w_train_shuf[start:end].to(device=device)
@@ -418,6 +448,7 @@ class TimePredictor:
             model.eval()
             with torch.no_grad():
                 pred_val = model(x_val.to(device=device))
+                # 验证集用 MAE 挑最优模型；最终保留验证误差最低的那一版权重。
                 val_mae = (pred_val - y_val.to(device=device)).abs().mean().item()
                 val_mae_ms = val_mae * float(y_std.item())
                 if val_mae < best_val_mae:
@@ -449,6 +480,9 @@ class TimePredictor:
         )
 
     def save(self, path: str) -> None:
+        """把模型权重和标准化统计量一起保存到磁盘。"""
+        # 除了模型权重，也一起保存训练时的标准化统计量。
+        # 这样推理时才能复用同一套归一化方式。
         payload = {
             "state_dict": self.model.state_dict(),
             "x_mean": self.x_mean,
@@ -464,6 +498,7 @@ class TimePredictor:
 
     @staticmethod
     def load(path: str) -> "TimePredictor":
+        """从磁盘恢复预测器及其对应的归一化配置。"""
         payload = torch.load(path, map_location="cpu")
         hidden_sizes = tuple(int(h) for h in payload["hidden_sizes"])
         in_features = int(payload.get("in_features", INPUT_DIM))
@@ -494,6 +529,7 @@ class TimePredictor:
         )
 
     def predict_from_features(self, features: torch.Tensor) -> torch.Tensor:
+        """对已经构造好的特征张量做推理，返回毫秒级延迟预测。"""
         if features.shape[-1] != INPUT_DIM:
             raise ValueError(
                 f"Expected features[..., {INPUT_DIM}] with columns "
@@ -510,7 +546,8 @@ class TimePredictor:
         x_std = self.x_std.to(device=x.device, dtype=x.dtype)
         x_norm = (x - x_mean) / x_std
 
-        # Keep model on CPU; this is a lightweight predictor.
+        # 推理阶段先按训练时统计量做标准化，再把预测值反标准化回毫秒。
+        # 模型本身保持在 CPU 上即可，开销很小。
         with torch.no_grad():
             y_norm = self.model(x_norm.cpu()).to(device=x.device, dtype=x.dtype)
         y_mean = self.y_mean.to(device=x.device, dtype=x.dtype)
@@ -534,6 +571,9 @@ class TimePredictor:
         device: Optional[torch.device] = None,
         dtype: torch.dtype = torch.float32,
     ) -> torch.Tensor:
+        """接收原始调度统计量，自动构造特征后执行延迟预测。"""
+        # 这是对外更方便的推理接口：
+        # 传入原始调度统计量，内部自动补齐显存信息、拼装特征并调用模型。
         if (
             gpu_mem_used_mb is None
             or gpu_mem_free_mb is None
@@ -621,12 +661,19 @@ class TimePredictor:
 
 
 def _eval_mae(predictor: TimePredictor, csv_path: str) -> float:
+    """在给定 CSV 数据集上评估预测器的平均绝对误差。"""
+    # 评估给定 CSV 上的平均绝对误差，单位仍然是毫秒。
     x, y = _read_select_stats_csv(csv_path)
     yhat = predictor.predict_from_features(x.to(dtype=torch.float32))
     return (yhat - y.to(dtype=torch.float32)).abs().mean().item()
 
 
 if __name__ == "__main__":
+    # 直接执行本文件时，会自动完成：
+    # 1. 按桶切分 train/val/test
+    # 2. 训练 MLP 预测器
+    # 3. 保存模型
+    # 4. 打印三份数据集上的 MAE
     ensure_bucketed_splits(
         input_csv=CSV_PATH,
         train_csv=TRAIN_CSV_PATH,
