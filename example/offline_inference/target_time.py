@@ -5,12 +5,13 @@ from typing import List, Optional
 from sarathi.config import ModelConfig, ParallelConfig, MetricsConfig, SystemConfig, WorkerConfig, \
     ReplicaConfig, OptSarathiSchedulerConfig, SarathiSchedulerConfig
 from sarathi import LLMEngine, SamplingParams, RequestOutput
+from sarathi.utils.output_utils import dump_run_config
 from sarathi.utils.prompt_utils import *
 
 BASE_OUTPUT_DIR = "./offline_inference_output"
 
 PROMPTS_NUMBER = 200
-TARGET_TIME = 80
+TARGET_TIME = 70
 
 prompts = get_prompts_from_dataset("dataset/ShareGPT_V3_unfiltered_cleaned_split.json", PROMPTS_NUMBER, random_sample=False)
 
@@ -37,7 +38,8 @@ scheduler_config = OptSarathiSchedulerConfig(
     chunk_size=256,
     max_num_seqs=32,
     enable_select_stats_csv=True,
-    chunk_score_overflow_penalty=3.0,
+    chunk_score_underfill_penalty=10.0,
+    chunk_score_overflow_penalty=1.0,
 )
 
 metrics_config = MetricsConfig(
@@ -56,6 +58,23 @@ system_config = SystemConfig(
     scheduler_config=scheduler_config,
     metrics_config=metrics_config,
     worker_config=worker_config,
+)
+
+
+dump_run_config(
+    output_dir=output_dir,
+    script=__file__,
+    base_output_dir=BASE_OUTPUT_DIR,
+    prompts_number=PROMPTS_NUMBER,
+    target_time=TARGET_TIME,
+    sampling_params=sampling_params,
+    replica_config=replica_config,
+    model_config=model_config,
+    parallel_config=parallel_config,
+    scheduler_config=scheduler_config,
+    metrics_config=metrics_config,
+    worker_config=worker_config,
+    system_config=system_config,
 )
 
 llm_engine = LLMEngine.from_system_config(system_config)

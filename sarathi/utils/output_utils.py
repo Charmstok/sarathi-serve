@@ -1,7 +1,10 @@
 import csv
 from datetime import datetime
+from dataclasses import fields, is_dataclass
+from enum import Enum
+import json
 import os
-from typing import List, Any
+from typing import Any, List
 
 
 def process_and_save_outputs(
@@ -60,3 +63,37 @@ def process_and_save_outputs(
 
     except Exception as e:
         print(f"\n[Error] 保存 CSV 文件时发生错误: {e}")
+
+
+def _to_serializable(value: Any) -> Any:
+    if is_dataclass(value):
+        return {
+            field.name: _to_serializable(getattr(value, field.name))
+            for field in fields(value)
+        }
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, dict):
+        return {str(k): _to_serializable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_to_serializable(v) for v in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
+
+
+def dump_run_config(
+    *,
+    output_dir: str,
+    config_name: str = "config.json",
+    **payload: Any,
+) -> str:
+    os.makedirs(output_dir, exist_ok=True)
+    config_path = os.path.join(output_dir, config_name)
+    serializable_payload = {
+        key: _to_serializable(value)
+        for key, value in payload.items()
+    }
+    with open(config_path, "w", encoding="utf-8") as f:
+        json.dump(serializable_payload, f, ensure_ascii=False, indent=2)
+    return config_path
