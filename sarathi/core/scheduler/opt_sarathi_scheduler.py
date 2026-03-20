@@ -1,6 +1,6 @@
 import time
 import os
-from typing import List
+from typing import List, Optional
 
 import numpy as np
 
@@ -43,6 +43,15 @@ class OptSarathiScheduler(BaseScheduler):
         )
         self.chunk_score_overflow_penalty = (
             self.scheduler_config.chunk_score_overflow_penalty
+        )
+        self.enable_prefill_slot_reservation = (
+            self.scheduler_config.enable_prefill_slot_reservation
+        )
+        self.prefill_reserve_waiting_threshold = (
+            self.scheduler_config.prefill_reserve_waiting_threshold
+        )
+        self.prefill_reserved_seq_slots = (
+            self.scheduler_config.prefill_reserved_seq_slots
         )
         self.enable_dynamic_chunking_schedule = (
             self.scheduler_config.enable_dynamic_chunking_schedule
@@ -147,6 +156,62 @@ class OptSarathiScheduler(BaseScheduler):
             (predicted_ms - target_time_ms) * self.chunk_score_overflow_penalty
         )
 
+    def _get_num_ready_waiting_seqs(self, now: float) -> int:
+        ready_waiting = 0
+        for seq in self.waiting:
+            if seq.arrival_time > now:
+                break
+            ready_waiting += 1
+        return ready_waiting
+
+    def _get_prefill_slot_borrow_limit(self, now: float) -> int:
+        if not self.enable_prefill_slot_reservation:
+            return 0
+
+        ready_waiting = self._get_num_ready_waiting_seqs(now)
+        if ready_waiting < self.prefill_reserve_waiting_threshold:
+            return 0
+
+        return min(self.prefill_reserved_seq_slots, ready_waiting)
+
+    def _select_prefill_slot_borrow_victim(
+        self,
+        running: List[Sequence],
+    ) -> Optional[Sequence]:
+        for seq in reversed(running):
+            if seq.is_paused() and seq.prompt_stage_processing_finished:
+                return seq
+        return None
+
+    def _remove_scheduled_seq_metadata(
+        self,
+        seq_id: str,
+        scheduled_seq_metadata_list: List[SequenceScheduleMetadata],
+    ) -> None:
+        for idx in range(len(scheduled_seq_metadata_list) - 1, -1, -1):
+            if scheduled_seq_metadata_list[idx].seq_id == seq_id:
+                scheduled_seq_metadata_list.pop(idx)
+                return
+        raise AssertionError(f"Scheduled metadata missing for seq_id={seq_id}")
+
+    def _borrow_prefill_seq_slot(
+        self,
+        *,
+        victim_seq: Sequence,
+        running: List[Sequence],
+        scheduled_seq_metadata_list: List[SequenceScheduleMetadata],
+        scheduled_decode_seqs: List[Sequence],
+        preempted_seq_ids: List[str],
+    ) -> None:
+        self._free_seq(victim_seq)
+        victim_seq.reset_for_recompute()
+        preempted_seq_ids.append(victim_seq.seq_id)
+        running.remove(victim_seq)
+        scheduled_decode_seqs.remove(victim_seq)
+        self._remove_scheduled_seq_metadata(
+            victim_seq.seq_id, scheduled_seq_metadata_list
+        )
+
     def _get_seq_prefill_search_high(self, seq: Sequence, num_batched_tokens: int) -> int:
         assert not seq.is_finished()
 
@@ -214,9 +279,12 @@ class OptSarathiScheduler(BaseScheduler):
         ignored_seq_ids: List[str] = []
         preempted_seq_ids: List[str] = []
         scheduled_seq_metadata_list: List[SequenceScheduleMetadata] = []
+        scheduled_decode_seqs: List[Sequence] = []
+        borrowed_preempted: List[Sequence] = []
 
         num_batched_tokens: int = 0
         target_time_ms = float(self.scheduler_config.target_time)
+        borrowed_prefill_seq_slots = 0
 
         (
             gpu_mem_used_mb,
@@ -287,6 +355,7 @@ class OptSarathiScheduler(BaseScheduler):
                 scheduled_seq_metadata_list.append(
                     SequenceScheduleMetadata.from_sequence(seq)
                 )
+                scheduled_decode_seqs.append(seq)
                 current_decode_tokens += 1
                 seq_context_len = seq.get_len()
                 current_sum_decode_context_len += seq_context_len
@@ -390,7 +459,38 @@ class OptSarathiScheduler(BaseScheduler):
 
             # 检查最大并发序列数限制
             if len(running) >= self.scheduler_config.max_num_seqs:
-                break
+                borrow_limit = self._get_prefill_slot_borrow_limit(now)
+                if borrowed_prefill_seq_slots >= borrow_limit:
+                    break
+
+                victim_seq = self._select_prefill_slot_borrow_victim(running)
+                if victim_seq is None:
+                    break
+
+                high_if_borrow = self._get_seq_prefill_search_high(
+                    seq, max(num_batched_tokens - 1, 0)
+                )
+                if high_if_borrow == 0:
+                    break
+
+                victim_context_len = victim_seq.get_len()
+                self._borrow_prefill_seq_slot(
+                    victim_seq=victim_seq,
+                    running=running,
+                    scheduled_seq_metadata_list=scheduled_seq_metadata_list,
+                    scheduled_decode_seqs=scheduled_decode_seqs,
+                    preempted_seq_ids=preempted_seq_ids,
+                )
+                borrowed_preempted.append(victim_seq)
+                borrowed_prefill_seq_slots += 1
+                num_batched_tokens -= 1
+                current_decode_tokens -= 1
+                current_sum_decode_context_len -= victim_context_len
+                current_batch_request_count -= 1
+                current_max_decode_context_len = max(
+                    (scheduled_seq.get_len() for scheduled_seq in scheduled_decode_seqs),
+                    default=0,
+                )
 
             # 计算这个新请求能分到多少 Budget
             high = self._get_seq_prefill_search_high(seq, num_batched_tokens)
@@ -449,6 +549,9 @@ class OptSarathiScheduler(BaseScheduler):
             current_max_prefill_processed_tokens = max(
                 current_max_prefill_processed_tokens, seq_processed
             )
+
+        if borrowed_preempted:
+            self.waiting.extend(borrowed_preempted)
 
         # 将本轮构建好的 running 列表（包含 Phase 1 的未处理完的老请求和 Phase 2 的新请求）赋值给 self.running，作为系统的最新状态。
         self.running = running

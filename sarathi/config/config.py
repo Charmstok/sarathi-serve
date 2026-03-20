@@ -333,6 +333,18 @@ class OptSarathiSchedulerConfig(BaseSchedulerConfig):
         default=2.0,
         metadata={"help": "预测时间高于 target_time 时的超时惩罚系数。"},
     )
+    enable_prefill_slot_reservation: bool = field(
+        default=False,
+        metadata={"help": "当 waiting backlog 较大时，是否启用 waiting prefills 的按需 seq 槽位借用。"},
+    )
+    prefill_reserve_waiting_threshold: int = field(
+        default=8,
+        metadata={"help": "触发 waiting prefill 按需借用 seq 槽位的 ready waiting 请求数阈值。"},
+    )
+    prefill_reserved_seq_slots: int = field(
+        default=4,
+        metadata={"help": "每轮最多按需借给 waiting prefills 的 seq 槽位数量。"},
+    )
     enable_select_stats_csv: bool = field(
         default=False,
         metadata={
@@ -361,6 +373,20 @@ class OptSarathiSchedulerConfig(BaseSchedulerConfig):
             raise ValueError("chunk_score_underfill_penalty must be > 0.")
         if self.chunk_score_overflow_penalty <= 0:
             raise ValueError("chunk_score_overflow_penalty must be > 0.")
+        if self.prefill_reserve_waiting_threshold <= 0:
+            raise ValueError("prefill_reserve_waiting_threshold must be > 0.")
+        if self.prefill_reserved_seq_slots < 0:
+            raise ValueError("prefill_reserved_seq_slots must be >= 0.")
+        if self.enable_prefill_slot_reservation:
+            if self.prefill_reserved_seq_slots == 0:
+                raise ValueError(
+                    "prefill_reserved_seq_slots must be > 0 when "
+                    "enable_prefill_slot_reservation is enabled."
+                )
+            if self.prefill_reserved_seq_slots >= self.max_num_seqs:
+                raise ValueError(
+                    "prefill_reserved_seq_slots must be smaller than max_num_seqs."
+                )
 
 
 @dataclass
