@@ -10,10 +10,15 @@ from sarathi.utils.prompt_utils import *
 
 BASE_OUTPUT_DIR = "./offline_inference_output"
 
+# 请求数
 PROMPTS_NUMBER = 200
+# token预算
 CHUNK_SIZE = 256
+# # 请求到达系统的间隔时间
+ARRIVAL_INTERVAL_S = 0.1
 
 prompts = get_prompts_from_dataset("dataset/ShareGPT_V3_unfiltered_cleaned_split.json", PROMPTS_NUMBER, random_sample=False)
+prompts_arrivaltime = prompt_arrival_time_smooth(len(prompts), ARRIVAL_INTERVAL_S)
 
 sampling_params = SamplingParams(temperature=0.8, top_p=0.95, max_tokens=512)
 
@@ -64,6 +69,7 @@ dump_run_config(
     base_output_dir=BASE_OUTPUT_DIR,
     prompts_number=PROMPTS_NUMBER,
     chunk_size=CHUNK_SIZE,
+    arrival_interval_s=ARRIVAL_INTERVAL_S,
     sampling_params=sampling_params,
     replica_config=replica_config,
     model_config=model_config,
@@ -80,11 +86,22 @@ llm_engine = LLMEngine.from_system_config(system_config)
 def generate(
     llm_engine: LLMEngine,
     prompts: List[str],
+    prompts_arrivaltime: List[float],
     sampling_params: SamplingParams,
 ) -> List[RequestOutput]:
-    for prompt in prompts:
-        llm_engine.add_request(prompt, sampling_params)
-    num_requests = llm_engine.get_num_unfinished_requests()
+    if len(prompts) != len(prompts_arrivaltime):
+        raise ValueError(
+            "prompts 与 prompts_arrivaltime 的长度不一致: "
+            f"{len(prompts)} != {len(prompts_arrivaltime)}"
+        )
+
+    for prompt, arrival_time in zip(prompts, prompts_arrivaltime):
+        llm_engine.add_request(
+            prompt,
+            sampling_params,
+            arrival_time=arrival_time,
+        )
+    num_requests = len(prompts)
     pbar = tqdm(total=num_requests, desc="Processed prompts")
 
     # Run the engine
@@ -106,7 +123,7 @@ def generate(
 
 # Generate texts from the prompts. The output is a list of RequestOutput objects
 # that contain the prompt, generated text, and other information.
-outputs = generate(llm_engine, prompts, sampling_params)
+outputs = generate(llm_engine, prompts, prompts_arrivaltime, sampling_params)
 # 处理输出
 # process_and_save_outputs(outputs)
 
