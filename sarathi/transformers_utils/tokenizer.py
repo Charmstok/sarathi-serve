@@ -1,5 +1,6 @@
 from typing import List, Optional, Tuple, Union
 
+from huggingface_hub import snapshot_download
 from transformers import AutoTokenizer, PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from sarathi.logger import init_logger
@@ -41,9 +42,32 @@ def get_tokenizer(
             raise ValueError("Cannot use the fast tokenizer in slow tokenizer mode.")
         kwargs["use_fast"] = False
 
+    tokenizer_path = tokenizer_name
+    revision = kwargs.get("revision")
+    try:
+        tokenizer_path = snapshot_download(
+            tokenizer_name,
+            revision=revision,
+            local_files_only=True,
+        )
+    except Exception:
+        pass
+
+    base_kwargs = dict(kwargs)
+    base_kwargs["trust_remote_code"] = trust_remote_code
+
     try:
         tokenizer = AutoTokenizer.from_pretrained(
-            tokenizer_name, *args, trust_remote_code=trust_remote_code, **kwargs
+            tokenizer_path,
+            *args,
+            local_files_only=True,
+            **base_kwargs,
+        )
+    except OSError:
+        tokenizer = AutoTokenizer.from_pretrained(
+            tokenizer_name,
+            *args,
+            **base_kwargs,
         )
     except TypeError as e:
         # The LLaMA tokenizer causes a protobuf error in some environments.

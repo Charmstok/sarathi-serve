@@ -11,7 +11,7 @@ import numpy as np
 import torch
 from huggingface_hub import snapshot_download
 from safetensors.torch import load_file, safe_open, save_file
-from tqdm.auto import tqdm
+from tqdm import tqdm
 
 from sarathi.logger import init_logger
 
@@ -21,7 +21,8 @@ logger = init_logger(__name__)
 class Disabledtqdm(tqdm):
 
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs, disable=True)
+        kwargs.setdefault("disable", True)
+        super().__init__(*args, **kwargs)
 
 
 def get_lock(model_name_or_path: str, cache_dir: Optional[str] = None):
@@ -99,13 +100,23 @@ def prepare_hf_model_weights(
         # Use file lock to prevent multiple processes from
         # downloading the same model weights at the same time.
         with get_lock(model_name_or_path, cache_dir):
-            hf_folder = snapshot_download(
-                model_name_or_path,
-                allow_patterns=allow_patterns,
-                cache_dir=cache_dir,
-                tqdm_class=Disabledtqdm,
-                revision=revision,
-            )
+            try:
+                hf_folder = snapshot_download(
+                    model_name_or_path,
+                    allow_patterns=allow_patterns,
+                    cache_dir=cache_dir,
+                    tqdm_class=Disabledtqdm,
+                    revision=revision,
+                    local_files_only=True,
+                )
+            except Exception:
+                hf_folder = snapshot_download(
+                    model_name_or_path,
+                    allow_patterns=allow_patterns,
+                    cache_dir=cache_dir,
+                    tqdm_class=Disabledtqdm,
+                    revision=revision,
+                )
     else:
         hf_folder = model_name_or_path
     hf_weights_files: List[str] = []

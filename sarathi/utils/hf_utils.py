@@ -8,6 +8,12 @@ from sarathi.logger import init_logger
 logger = init_logger(__name__)
 
 
+def _get_rope_scaling_type(rope_scaling: Optional[dict]) -> Optional[str]:
+    if rope_scaling is None:
+        return None
+    return rope_scaling.get("type", rope_scaling.get("rope_type"))
+
+
 _STR_DTYPE_TO_TORCH_DTYPE = {
     "half": torch.float16,
     "float16": torch.float16,
@@ -88,17 +94,19 @@ def get_and_verify_max_len(
             derived_max_model_len = min(derived_max_model_len, max_len_key)
 
     rope_scaling = getattr(hf_config, "rope_scaling", None)
-    if rope_scaling is not None:
+    rope_scaling_type = _get_rope_scaling_type(rope_scaling)
+    if rope_scaling is not None and rope_scaling_type != "default":
         if derived_max_model_len == float("inf"):
             raise ValueError(
                 "When using rope_scaling, the model's config.json must "
                 "contain one of the following keys to determine the original "
                 f"maximum length of the model: {possible_keys}"
             )
-        assert "factor" in rope_scaling
-        scaling_factor = rope_scaling["factor"]
-        if rope_scaling["type"] == "yarn":
-            derived_max_model_len = rope_scaling["original_max_position_embeddings"]
+        scaling_factor = rope_scaling.get("factor", 1.0)
+        if rope_scaling_type == "yarn":
+            derived_max_model_len = rope_scaling.get(
+                "original_max_position_embeddings", derived_max_model_len
+            )
         derived_max_model_len *= scaling_factor
 
     if max_model_len is None:

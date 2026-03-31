@@ -306,13 +306,16 @@ def get_rope(
     is_neox_style: bool,
     rope_scaling: Optional[Dict[str, Any]],
 ) -> RotaryEmbedding:
-    if rope_scaling is None:
+    scaling_type = None
+    if rope_scaling is not None:
+        scaling_type = rope_scaling.get("type", rope_scaling.get("rope_type"))
+
+    if rope_scaling is None or scaling_type == "default":
         rotary_emb = RotaryEmbedding(
             head_size, rotary_dim, max_position, base, is_neox_style
         )
     else:
-        scaling_type = rope_scaling["type"]
-        scaling_factor = rope_scaling["factor"]
+        scaling_factor = rope_scaling.get("factor", 1.0)
         if scaling_type == "linear":
             rotary_emb = LinearScalingRotaryEmbedding(
                 head_size, rotary_dim, max_position, base, is_neox_style, scaling_factor
@@ -322,7 +325,9 @@ def get_rope(
                 head_size, rotary_dim, max_position, base, is_neox_style, scaling_factor
             )
         elif scaling_type == "yarn":
-            original_max_position = rope_scaling["original_max_position_embeddings"]
+            original_max_position = rope_scaling.get(
+                "original_max_position_embeddings", max_position
+            )
             assert max_position == original_max_position * scaling_factor
             extra_kwargs = {
                 k: v
