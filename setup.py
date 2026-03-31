@@ -2,6 +2,7 @@ import io
 import os
 import re
 import subprocess
+import warnings
 from typing import List, Set
 
 from packaging.version import parse, Version
@@ -41,6 +42,7 @@ def get_nvcc_cuda_version(cuda_dir: str) -> Version:
 # Collect the compute capabilities of all available GPUs.
 device_count = torch.cuda.device_count()
 compute_capabilities: Set[int] = set()
+ptx_compute_capabilities: Set[int] = set()
 for i in range(device_count):
     major, minor = torch.cuda.get_device_capability(i)
     if major < 7:
@@ -52,6 +54,8 @@ for i in range(device_count):
 nvcc_cuda_version = get_nvcc_cuda_version(CUDA_HOME)
 if nvcc_cuda_version < Version("11.0"):
     raise RuntimeError("CUDA 11.0 or higher is required to build the package.")
+if nvcc_cuda_version < Version("12.8"):
+    NVCC_FLAGS += ["-allow-unsupported-compiler"]
 if 86 in compute_capabilities and nvcc_cuda_version < Version("11.1"):
     raise RuntimeError(
         "CUDA 11.1 or higher is required for GPUs with compute capability 8.6."
@@ -68,6 +72,17 @@ if 90 in compute_capabilities and nvcc_cuda_version < Version("11.8"):
     raise RuntimeError(
         "CUDA 11.8 or higher is required for GPUs with compute capability 9.0."
     )
+if any(capability >= 100 for capability in compute_capabilities):
+    if nvcc_cuda_version < Version("12.8"):
+        warnings.warn(
+            "CUDA < 12.8 cannot build native Blackwell kernels. Falling back to "
+            "sm_90 with compute_90 PTX for forward compatibility."
+        )
+        compute_capabilities = {
+            90 if capability >= 100 else capability
+            for capability in compute_capabilities
+        }
+        ptx_compute_capabilities.add(90)
 
 # If no GPU is available, add all supported compute capabilities.
 if not compute_capabilities:
@@ -79,9 +94,13 @@ if not compute_capabilities:
         compute_capabilities.add(90)
 
 # Add target compute capabilities to NVCC flags.
-for capability in compute_capabilities:
+for capability in sorted(compute_capabilities):
     NVCC_FLAGS += [
         "-gencode", f"arch=compute_{capability},code=sm_{capability}"
+    ]
+for capability in sorted(ptx_compute_capabilities):
+    NVCC_FLAGS += [
+        "-gencode", f"arch=compute_{capability},code=compute_{capability}"
     ]
 
 # Use NVCC threads to parallelize the build.
