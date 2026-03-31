@@ -9,7 +9,7 @@ from sarathi import LLMEngine, SamplingParams, RequestOutput
 from sarathi.utils.prompt_utils import get_prompts_from_dataset, prompt_arrival_time_smooth
 
 BASE_OUTPUT_DIR = "./offline_inference_output"
-PROMPT_AMOUNT = 10000
+PROMPT_AMOUNT = 100000
 
 os.environ.setdefault("SARATHI_SAMPLING_BACKEND", "torch")
 
@@ -17,7 +17,7 @@ prompts = get_prompts_from_dataset("dataset/ShareGPT_V3_unfiltered_cleaned_split
 prompts_arrivaltime = prompt_arrival_time_smooth(PROMPT_AMOUNT, 0.1)
 
 
-sampling_params = SamplingParams(temperature=0.8, top_p=0.95, max_tokens=512)
+sampling_params = SamplingParams(temperature=0.8, top_p=0.95, max_tokens=2048)
 
 output_dir = f"{BASE_OUTPUT_DIR}/{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
 
@@ -27,7 +27,7 @@ replica_config = ReplicaConfig(
 
 model_config = ModelConfig(
     model="Qwen/Qwen3-8B",
-    max_model_len=1024,
+    max_model_len=4096,
 )
 
 parallel_config = ParallelConfig(
@@ -38,8 +38,8 @@ parallel_config = ParallelConfig(
 # 使用 Sarathi 调度器，将测试结果输出到 csv 文件中，
 # 使用这些数据进行训练，以让 OptSarathi 使用时间预算。
 scheduler_config = SarathiSchedulerConfig(
-    chunk_size=256,
-    max_num_seqs=32,
+    chunk_size=1024,
+    max_num_seqs=256,
     policy_name="fcfs",
     enable_select_stats_csv=True,
 )
@@ -50,7 +50,7 @@ metrics_config = MetricsConfig(
 )
 
 worker_config = WorkerConfig(
-    gpu_memory_utilization=0.7
+    gpu_memory_utilization=0.6
 )
 
 system_config = SystemConfig(
