@@ -2,7 +2,7 @@ from tqdm import tqdm
 from typing import List
 
 from sarathi.config import ModelConfig, ParallelConfig, MetricsConfig, SystemConfig, WorkerConfig, \
-    ReplicaConfig, OptSarathiSchedulerConfig
+    ReplicaConfig, OptSarathiSchedulerConfig, SarathiSchedulerConfig
 from sarathi import LLMEngine, SamplingParams, RequestOutput
 
 
@@ -30,7 +30,7 @@ parallel_config = ParallelConfig(
     pipeline_parallel_size=1,
 )
 
-scheduler_config = OptSarathiSchedulerConfig(
+scheduler_config = SarathiSchedulerConfig(
     chunk_size=256,
     max_num_seqs=10,
 )
@@ -41,7 +41,7 @@ metrics_config = MetricsConfig(
 )
 
 worker_config = WorkerConfig(
-
+    gpu_memory_utilization=0.3,
 )
 
 system_config = SystemConfig(

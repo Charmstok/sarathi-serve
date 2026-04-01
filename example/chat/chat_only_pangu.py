@@ -3,7 +3,7 @@ from tqdm import tqdm
 from typing import List
 
 from sarathi.config import ModelConfig, ParallelConfig, MetricsConfig, SystemConfig, WorkerConfig, \
-    ReplicaConfig, OptSarathiSchedulerConfig
+    ReplicaConfig, SarathiSchedulerConfig
 from sarathi import LLMEngine, SamplingParams, RequestOutput
 
 BASE_OUTPUT_DIR = "./offline_inference_output"
@@ -25,7 +25,7 @@ replica_config = ReplicaConfig(
 )
 
 model_config = ModelConfig(
-    model="./models",
+    model="./models/openPangu-Embedded-7B-V1.1",
     max_model_len=1024,
 )
 
@@ -34,7 +34,7 @@ parallel_config = ParallelConfig(
     pipeline_parallel_size=1,
 )
 
-scheduler_config = OptSarathiSchedulerConfig(
+scheduler_config = SarathiSchedulerConfig(
     chunk_size=256,
     max_num_seqs=10,
 )
