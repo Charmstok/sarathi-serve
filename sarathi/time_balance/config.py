@@ -6,11 +6,11 @@ from typing import Optional, Tuple
 
 # 训练用（同时也是 F() 默认使用的）select stats CSV 路径。
 CSV_PATH = (
-    "offline_inference_output/dataset/replica_0/select_stats_rank0.csv"
+    "offline_inference_output/dataset/select_stats_rank0.csv"
 )
 
 # 训练好的 MLP 预测器保存/加载路径。
-MODEL_CACHE_PATH = str(Path(__file__).resolve().parent / "time_predictor_mlp_v7.pt")
+MODEL_CACHE_PATH = str(Path(__file__).resolve().parent / "time_predictor_mlp.pt")
 
 # 是否在 predict_time.py 中自动加载/保存 MODEL_CACHE_PATH。
 ENABLE_MODEL_CACHE = True
@@ -19,7 +19,7 @@ ENABLE_MODEL_CACHE = True
 @dataclass
 class SelectStatsBucketSplitConfig:
     chunk_size: int = field(
-        default=256,
+        default=1024,
         metadata={"help": "调度 chunk_size（用于区分 scheduled_tokens==chunk_size 这一桶）。"},
     )
     bucket_size: int = field(

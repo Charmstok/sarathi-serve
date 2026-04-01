@@ -1,9 +1,9 @@
 import datetime
 from tqdm import tqdm
-from typing import List, Optional
+from typing import List
 
 from sarathi.config import ModelConfig, ParallelConfig, MetricsConfig, SystemConfig, WorkerConfig, \
-    ReplicaConfig, OptSarathiSchedulerConfig, SarathiSchedulerConfig
+    ReplicaConfig, SarathiSchedulerConfig
 from sarathi import LLMEngine, SamplingParams, RequestOutput
 from sarathi.utils.output_utils import dump_run_config
 from sarathi.utils.prompt_utils import *
@@ -11,16 +11,16 @@ from sarathi.utils.prompt_utils import *
 BASE_OUTPUT_DIR = "./offline_inference_output"
 
 # 请求数
-PROMPTS_NUMBER = 200
+PROMPTS_NUMBER = 1000
 # token预算
-CHUNK_SIZE = 256
+CHUNK_SIZE = 1024
 # # 请求到达系统的间隔时间
 ARRIVAL_INTERVAL_S = 0.1
 
-prompts = get_prompts_from_dataset("dataset/ShareGPT_V3_unfiltered_cleaned_split.json", PROMPTS_NUMBER, random_sample=False)
+prompts = get_prompts_from_dataset("dataset/ShareGPT_V3_unfiltered_cleaned_split.json", PROMPTS_NUMBER, random_sample=True, seed=42)
 prompts_arrivaltime = prompt_arrival_time_smooth(len(prompts), ARRIVAL_INTERVAL_S)
 
-sampling_params = SamplingParams(temperature=0.8, top_p=0.95, max_tokens=512)
+sampling_params = SamplingParams(temperature=0.8, top_p=0.95, max_tokens=2048)
 
 output_dir = f"{BASE_OUTPUT_DIR}/{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}-token预算-{CHUNK_SIZE}tokens"
 
@@ -30,7 +30,7 @@ replica_config = ReplicaConfig(
 
 model_config = ModelConfig(
     model="Qwen/Qwen3-8B",
-    max_model_len=512,
+    max_model_len=4096,
 )
 
 parallel_config = ParallelConfig(
@@ -40,7 +40,7 @@ parallel_config = ParallelConfig(
 
 scheduler_config = SarathiSchedulerConfig(
     chunk_size=CHUNK_SIZE,
-    max_num_seqs=32,
+    max_num_seqs=256,
     enable_select_stats_csv=True
 )
 
@@ -50,7 +50,7 @@ metrics_config = MetricsConfig(
 )
 
 worker_config = WorkerConfig(
-    gpu_memory_utilization=0.7
+    gpu_memory_utilization=0.6
 )
 
 system_config = SystemConfig(

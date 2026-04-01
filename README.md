@@ -24,6 +24,7 @@ Sarathi-Serve 是一个高吞吐、低延迟的大模型推理框架，技术细
 ### CUDA
 
 本项目基于 CUDA 12.8 on NVIDIA 3090 and 4090.
+同时也在 NVIDIA RTX PRO 5000 72GB 显卡上进行部分实验。
 
 ### Clone 项目
 
@@ -36,7 +37,7 @@ git clone https://github.com/Charmstok/sarathi-serve.git
 创建 python 3.11 环境
 
 ```sh
-conda create -p ./env python=3.11  
+conda create -p ./env python=3.11
 ```
 
 激活创建的环境，
@@ -48,8 +49,8 @@ conda activate ./env
 ### 安装本项目需要的依赖以及 cuda 环境
 
 ```sh
-pip install -r requirements.txt
 pip install -e .
+pip install -r requirements.txt
 ```
 
 ### 额外适配的模型
@@ -90,8 +91,8 @@ python example/time_balance/offline_select_status_csv.py
 
 接下来，打开 `sarathi/time_balance/config.py`，按你刚生成的数据修改：
 - `CSV_PATH`：指向你最新目录下的 `select_stats_rank0.csv`
-- `MODEL_CACHE_PATH`：模型保存路径（默认在 `sarathi/time_balance/time_predictor_mlp_v6.pt`）
-- `BUCKET_SPLIT_CONFIG.chunk_size`：建议与数据采集时的 scheduler `chunk_size` 一致（默认 256）
+- `MODEL_CACHE_PATH`：模型保存路径（默认在 `sarathi/time_balance/time_predictor_mlp.pt`）
+- `BUCKET_SPLIT_CONFIG.chunk_size`：建议与数据采集时的 scheduler `chunk_size` 一致
 
 执行：
 

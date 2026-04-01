@@ -338,7 +338,7 @@ class OptSarathiSchedulerConfig(BaseSchedulerConfig):
         metadata={"help": "当 waiting backlog 较大时，是否启用 waiting prefills 的按需 seq 槽位借用。"},
     )
     prefill_reserve_waiting_threshold: int = field(
-        default=8,
+        default=32,
         metadata={"help": "触发 waiting prefill 按需借用 seq 槽位的 ready waiting 请求数阈值。"},
     )
     prefill_reserved_seq_slots: int = field(

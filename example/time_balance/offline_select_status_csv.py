@@ -9,7 +9,7 @@ from sarathi import LLMEngine, SamplingParams, RequestOutput
 from sarathi.utils.prompt_utils import get_prompts_from_dataset, prompt_arrival_time_smooth
 
 BASE_OUTPUT_DIR = "./offline_inference_output"
-PROMPT_AMOUNT = 100000
+PROMPT_AMOUNT = 92779
 
 os.environ.setdefault("SARATHI_SAMPLING_BACKEND", "torch")
 

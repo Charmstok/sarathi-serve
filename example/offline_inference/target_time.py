@@ -1,9 +1,9 @@
 import datetime
 from tqdm import tqdm
-from typing import List, Optional
+from typing import List
 
 from sarathi.config import ModelConfig, ParallelConfig, MetricsConfig, SystemConfig, WorkerConfig, \
-    ReplicaConfig, OptSarathiSchedulerConfig, SarathiSchedulerConfig
+    ReplicaConfig, OptSarathiSchedulerConfig
 from sarathi import LLMEngine, SamplingParams, RequestOutput
 from sarathi.utils.output_utils import dump_run_config
 from sarathi.utils.prompt_utils import *
@@ -11,16 +11,16 @@ from sarathi.utils.prompt_utils import *
 BASE_OUTPUT_DIR = "./offline_inference_output"
 
 # 请求数
-PROMPTS_NUMBER = 200
+PROMPTS_NUMBER = 1000
 # 时间预算
-TARGET_TIME = 75
+TARGET_TIME = 110
 # 请求到达系统的间隔时间
 ARRIVAL_INTERVAL_S = 0.1
 
-prompts = get_prompts_from_dataset("dataset/ShareGPT_V3_unfiltered_cleaned_split.json", PROMPTS_NUMBER, random_sample=False)
+prompts = get_prompts_from_dataset("dataset/ShareGPT_V3_unfiltered_cleaned_split.json", PROMPTS_NUMBER, random_sample=True, seed=42)
 prompts_arrivaltime = prompt_arrival_time_smooth(len(prompts), ARRIVAL_INTERVAL_S)
 
-sampling_params = SamplingParams(temperature=0.8, top_p=0.95, max_tokens=512)
+sampling_params = SamplingParams(temperature=0.8, top_p=0.95, max_tokens=2048)
 
 output_dir = f"{BASE_OUTPUT_DIR}/{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}-时间预算-{TARGET_TIME}ms"
 
@@ -30,7 +30,7 @@ replica_config = ReplicaConfig(
 
 model_config = ModelConfig(
     model="Qwen/Qwen3-8B",
-    max_model_len=512,
+    max_model_len=4096,
 )
 
 parallel_config = ParallelConfig(
@@ -40,11 +40,11 @@ parallel_config = ParallelConfig(
 
 scheduler_config = OptSarathiSchedulerConfig(
     target_time=TARGET_TIME,
-    chunk_size=256,
-    max_num_seqs=32,
+    chunk_size=1024,
+    max_num_seqs=256,
     enable_select_stats_csv=True,
-    chunk_score_underfill_penalty=10.0,
-    chunk_score_overflow_penalty=1.0,
+    chunk_score_underfill_penalty=1.0,
+    chunk_score_overflow_penalty=2.5
 )
 
 metrics_config = MetricsConfig(
@@ -53,7 +53,7 @@ metrics_config = MetricsConfig(
 )
 
 worker_config = WorkerConfig(
-    gpu_memory_utilization=0.7
+    gpu_memory_utilization=0.6
 )
 
 system_config = SystemConfig(
