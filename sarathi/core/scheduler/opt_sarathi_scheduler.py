@@ -15,6 +15,7 @@ from sarathi.core.block_space_manager.sarathi_block_space_manager import (
 )
 from sarathi.core.datatypes.scheduler_output import SchedulerOutputs
 from sarathi.core.datatypes.sequence import Sequence, SequenceScheduleMetadata
+from sarathi.core.datatypes.sequence_status import SequenceStatus
 from sarathi.core.chunk_search import ChunkSearchFactory
 from sarathi.core.scheduler.base_scheduler import BaseScheduler
 from sarathi.logger import init_logger
@@ -52,6 +53,15 @@ class OptSarathiScheduler(BaseScheduler):
         )
         self.prefill_reserved_seq_slots = (
             self.scheduler_config.prefill_reserved_seq_slots
+        )
+        self.enable_active_prefill_control = (
+            self.scheduler_config.enable_active_prefill_control
+        )
+        self.max_active_prefill_seqs = (
+            self.scheduler_config.max_active_prefill_seqs
+        )
+        self.min_active_prefill_chunk_size = (
+            self.scheduler_config.min_active_prefill_chunk_size
         )
         self.enable_dynamic_chunking_schedule = (
             self.scheduler_config.enable_dynamic_chunking_schedule
@@ -174,6 +184,58 @@ class OptSarathiScheduler(BaseScheduler):
 
         return min(self.prefill_reserved_seq_slots, ready_waiting)
 
+    def _get_batch_token_cap(self) -> int:
+        return int(
+            self.scheduler_config.get_max_num_batched_tokens(
+                self.model_config.max_model_len
+            )
+        )
+
+    def _get_min_meaningful_prefill_tokens(self, seq: Sequence) -> int:
+        remaining_prompt = (
+            seq.get_prompt_len() - seq.get_num_prompt_tokens_stage_processed()
+        )
+        if remaining_prompt <= 0:
+            return 0
+        if not self.enable_active_prefill_control:
+            return 1
+        return min(remaining_prompt, self.min_active_prefill_chunk_size)
+
+    def _get_active_prefill_seq_cap(
+        self,
+        *,
+        decode_seq_count: int,
+        num_batched_tokens: int,
+    ) -> int:
+        remaining_seq_slots = max(
+            self.scheduler_config.max_num_seqs - decode_seq_count,
+            0,
+        )
+        if not self.enable_active_prefill_control:
+            return remaining_seq_slots
+        if remaining_seq_slots == 0:
+            return 0
+        remaining_token_budget = max(
+            self._get_batch_token_cap() - num_batched_tokens,
+            0,
+        )
+        token_limited_cap = remaining_token_budget // self.min_active_prefill_chunk_size
+        return min(
+            self.max_active_prefill_seqs,
+            remaining_seq_slots,
+            token_limited_cap,
+        )
+
+    def _defer_running_prefill(
+        self,
+        seq: Sequence,
+        deferred_prefills: List[Sequence],
+    ) -> None:
+        self._free_seq(seq)
+        if not seq.is_waiting():
+            seq.set_status(SequenceStatus.WAITING)
+        deferred_prefills.append(seq)
+
     def _select_prefill_slot_borrow_victim(
         self,
         running: List[Sequence],
@@ -281,10 +343,16 @@ class OptSarathiScheduler(BaseScheduler):
         scheduled_seq_metadata_list: List[SequenceScheduleMetadata] = []
         scheduled_decode_seqs: List[Sequence] = []
         borrowed_preempted: List[Sequence] = []
+        deferred_prefills: List[Sequence] = []
 
         num_batched_tokens: int = 0
         target_time_ms = float(self.scheduler_config.target_time)
         borrowed_prefill_seq_slots = 0
+        active_prefill_seq_count = 0
+        active_prefill_seq_cap = 0
+        deferred_prefill_seq_count = 0
+        waiting_prefill_blocked_by_cap = 0
+        waiting_prefill_blocked_by_min_chunk = 0
 
         (
             gpu_mem_used_mb,
@@ -302,56 +370,35 @@ class OptSarathiScheduler(BaseScheduler):
         current_max_decode_context_len = 0
         current_max_prefill_processed_tokens = 0
 
-        ######################################################################
-        # 阶段 1：将已有的运行中序列组加入 batch。(处理正在运行的请求)
-        # 存在两种情况：
-        # 1. 序列组的 prefill 尚未完成。这类序列的处理流程与 Sarathi 调度器中的逻辑完全一致。
-        # 2. 序列组的 prefill 已经完成。在这种情况下，我们需要检查下一段解码 token 的内存可用性，
-        #    并在必要时抢占（preempt）一些序列组。
-        #
-        # 需要注意，被抢占的序列组可能属于上述两类中的任意一种。
-        ######################################################################
-
-        # 注意：只有在没有可用槽位，让所有序列组保持 RUNNING 状态时，才会发生抢占。
-        # 此时，策略负责决定抢占哪些序列组。
         self.running = self.policy.sort_by_priority(now, self.running)
 
         # 优先级1：处理 Decode 任务
-        # 首轮处理先所有已完成预填充的请求, 以便准确统计解码 token 的数量
         running_prefills: List[Sequence] = []
 
         while self.running:
             seq = self.running.pop(0)
 
-            # 如果请求被暂停，暂不处理
             if not seq.is_paused():
                 running.append(seq)
                 continue
 
-            # 如果是 Prefill 还没跑完的任务，先存起来，稍后处理
             if not seq.prompt_stage_processing_finished:
                 running_prefills.append(seq)
                 continue
 
             while not self.block_manager.can_append_slot():
                 if self.running:
-                    # 如果显存不足，执行 _preempt 将低优先级请求踢回等待队列，腾出空间
                     victim_seq = self.running.pop(-1)
                     self._preempt(victim_seq)
                     preempted_seq_ids.append(victim_seq.seq_id)
                 else:
-                    # 如果 self.running 已经空了，说明：
-                    # 1. 也就是当前 Batch 里除了我（seq），其他人都被踢光了。
-                    # 2. 即使这样，剩下的空间还是不够我放下一个 Token。
-                    # 那么，没办法，只能把自己也停掉。
                     self._preempt(seq)
                     preempted_seq_ids.append(seq.seq_id)
                     break
             else:
-                # 在物理显存中真正分配这个 slot
                 self._append_slot(seq)
                 running.append(seq)
-                num_batched_tokens += 1 # 扣除一个token的预算
+                num_batched_tokens += 1
                 scheduled_seq_metadata_list.append(
                     SequenceScheduleMetadata.from_sequence(seq)
                 )
@@ -364,16 +411,31 @@ class OptSarathiScheduler(BaseScheduler):
                     current_max_decode_context_len, seq_context_len
                 )
 
-        # 优先级2：处理已加入running列表，但只有部分chunk执行了prefill，没有完全执行完Prefill阶段的请求。
-        # 现在加入尚未完成预填充的请求，这些预填充所需的内存早已分配完毕，
-        # 因此能够一次性全部运行它们
+        # 优先级2：处理已有 unfinished prefill
         for seq in running_prefills:
-            # 断言：确保这里面装的确实是还没跑完 Prefill 的任务
             assert not seq.prompt_stage_processing_finished
+
+            current_active_prefill_cap = self._get_active_prefill_seq_cap(
+                decode_seq_count=len(scheduled_decode_seqs),
+                num_batched_tokens=num_batched_tokens,
+            )
+            active_prefill_seq_cap = current_active_prefill_cap
+
+            if (
+                self.enable_active_prefill_control
+                and active_prefill_seq_count >= current_active_prefill_cap
+            ):
+                self._defer_running_prefill(seq, deferred_prefills)
+                deferred_prefill_seq_count += 1
+                continue
 
             high = self._get_seq_prefill_search_high(seq, num_batched_tokens)
             if high == 0:
-                running.append(seq)
+                if self.enable_active_prefill_control:
+                    self._defer_running_prefill(seq, deferred_prefills)
+                    deferred_prefill_seq_count += 1
+                else:
+                    running.append(seq)
                 continue
 
             seq_processed = seq.get_num_prompt_tokens_stage_processed()
@@ -402,17 +464,39 @@ class OptSarathiScheduler(BaseScheduler):
                 )
 
             next_num_prefill_tokens = self._chunk_search.min_score(1, high, score)
+            min_meaningful_prefill_tokens = self._get_min_meaningful_prefill_tokens(seq)
+            forced_prefill_tokens = min(high, min_meaningful_prefill_tokens)
+            can_force_progress = high >= 1 and (
+                not scheduled_seq_metadata_list
+                or (
+                    self.enable_active_prefill_control
+                    and active_prefill_seq_count == 0
+                )
+            )
 
-            # 如果本轮剩余 budget 不足（_get_seq_next_num_prefill_tokens 返回 0），
-            # 先把该请求放回 running，保持占位，等下一轮再继续 prefill。
-            # 在流水线场景或开启最小分块阈值时可能出现这种情况。
             if next_num_prefill_tokens == 0:
-                # 避免 Prefill-only 场景下因为 target_time 过低导致永远调度不到 token（死锁）。
-                # 若当前 batch 还没有任何任务被调度，则强制至少推进 1 个 token。
-                if not scheduled_seq_metadata_list and high >= 1:
+                if self.enable_active_prefill_control:
+                    if can_force_progress:
+                        next_num_prefill_tokens = forced_prefill_tokens
+                    else:
+                        self._defer_running_prefill(seq, deferred_prefills)
+                        deferred_prefill_seq_count += 1
+                        continue
+                elif not scheduled_seq_metadata_list and high >= 1:
                     next_num_prefill_tokens = 1
                 else:
                     running.append(seq)
+                    continue
+
+            if (
+                self.enable_active_prefill_control
+                and next_num_prefill_tokens < min_meaningful_prefill_tokens
+            ):
+                if can_force_progress:
+                    next_num_prefill_tokens = forced_prefill_tokens
+                else:
+                    self._defer_running_prefill(seq, deferred_prefills)
+                    deferred_prefill_seq_count += 1
                     continue
 
             num_batched_tokens += next_num_prefill_tokens
@@ -428,36 +512,34 @@ class OptSarathiScheduler(BaseScheduler):
             current_max_prefill_processed_tokens = max(
                 current_max_prefill_processed_tokens, seq_processed
             )
+            active_prefill_seq_count += 1
 
-        # 优先级3：处理等待队列的新情求
-        ######################################################################
-        # Phase 2: 处理等待队列中的新请求 (New Requests)
-        # 目标：Piggybacking (捎带执行)，实现 Stall-free Batching
-        ######################################################################
-        # Optimization: We do not sort the waiting queue since the preempted
-        # sequence groups are added to the front and the new sequence groups
-        # are added to the back.
-        # 只要还有 Budget (num_batched_tokens < chunk_size)，就尝试加入新请求
+        # 优先级3：处理 waiting 中的新 prefill 请求
         while self.waiting:
             seq = self.waiting[0]
 
-            # 处理 Benchmarking 的特殊情况（模拟请求到达时间）
             if seq.arrival_time > now:
                 break
 
-            # 检查 Prompt 是否超过模型最大支持长度
             if not self._check_request_prompt_length(seq):
                 ignored_seq_ids.append(seq.seq_id)
                 continue
 
-            # 如果显存不够，这里不会抢占，而是直接不调度该新请求
             if not self.block_manager.can_allocate(seq):
-                # this is different from vllm scheduler
-                # even if we cannot allocate this sequence group
-                # there might be other sequence groups that can be allocated
                 break
 
-            # 检查最大并发序列数限制
+            current_active_prefill_cap = self._get_active_prefill_seq_cap(
+                decode_seq_count=len(scheduled_decode_seqs),
+                num_batched_tokens=num_batched_tokens,
+            )
+            active_prefill_seq_cap = current_active_prefill_cap
+            if (
+                self.enable_active_prefill_control
+                and active_prefill_seq_count >= current_active_prefill_cap
+            ):
+                waiting_prefill_blocked_by_cap += 1
+                break
+
             if len(running) >= self.scheduler_config.max_num_seqs:
                 borrow_limit = self._get_prefill_slot_borrow_limit(now)
                 if borrowed_prefill_seq_slots >= borrow_limit:
@@ -492,7 +574,6 @@ class OptSarathiScheduler(BaseScheduler):
                     default=0,
                 )
 
-            # 计算这个新请求能分到多少 Budget
             high = self._get_seq_prefill_search_high(seq, num_batched_tokens)
             if high == 0:
                 break
@@ -523,42 +604,74 @@ class OptSarathiScheduler(BaseScheduler):
                 )
 
             next_num_prefill_tokens = self._chunk_search.min_score(1, high, score)
+            min_meaningful_prefill_tokens = self._get_min_meaningful_prefill_tokens(seq)
+            forced_prefill_tokens = min(high, min_meaningful_prefill_tokens)
+            can_force_progress = high >= 1 and (
+                not scheduled_seq_metadata_list
+                or (
+                    self.enable_active_prefill_control
+                    and active_prefill_seq_count == 0
+                )
+            )
 
-            # 如果计算结果为 0，说明 num_batched_tokens 已经达到了 chunk_size
-            # 此时停止接纳新请求
             if next_num_prefill_tokens == 0:
-                # 避免 Prefill-only 场景下因为 target_time 过低导致永远调度不到 token（死锁）。
-                # 若当前 batch 还没有任何任务被调度，则强制至少推进 1 个 token。
-                if not scheduled_seq_metadata_list and high >= 1:
+                if self.enable_active_prefill_control:
+                    if can_force_progress:
+                        next_num_prefill_tokens = forced_prefill_tokens
+                    else:
+                        waiting_prefill_blocked_by_min_chunk += 1
+                        break
+                elif not scheduled_seq_metadata_list and high >= 1:
                     next_num_prefill_tokens = 1
                 else:
                     break
 
-            seq = self.waiting.pop(0)                       # 真正从等待队列中移除
-            self._allocate(seq)                             # 在 Block Manager 中正式分配显存呢
-            num_batched_tokens += next_num_prefill_tokens   # 扣除预算
-            scheduled_seq_metadata_list.append(             # 告诉引擎，这个新请求本轮只跑 next_num_prefill_tokens 这么长
+            if (
+                self.enable_active_prefill_control
+                and next_num_prefill_tokens < min_meaningful_prefill_tokens
+            ):
+                if can_force_progress:
+                    next_num_prefill_tokens = forced_prefill_tokens
+                else:
+                    waiting_prefill_blocked_by_min_chunk += 1
+                    break
+
+            seq = self.waiting.pop(0)
+            self._allocate(seq)
+            num_batched_tokens += next_num_prefill_tokens
+            scheduled_seq_metadata_list.append(
                 SequenceScheduleMetadata.from_sequence(
                     seq, prompt_chunk_len=next_num_prefill_tokens
                 )
             )
-            running.append(seq)                             # 加入本轮运行名单
+            running.append(seq)
             current_prefill_tokens += next_num_prefill_tokens
             current_prefill_processed_tokens += seq_processed
             current_batch_request_count += 1
             current_max_prefill_processed_tokens = max(
                 current_max_prefill_processed_tokens, seq_processed
             )
+            active_prefill_seq_count += 1
 
         if borrowed_preempted:
             self.waiting.extend(borrowed_preempted)
+        if deferred_prefills:
+            self.waiting = deferred_prefills + self.waiting
 
-        # 将本轮构建好的 running 列表（包含 Phase 1 的未处理完的老请求和 Phase 2 的新请求）赋值给 self.running，作为系统的最新状态。
         self.running = running
+        active_prefill_seq_cap = self._get_active_prefill_seq_cap(
+            decode_seq_count=len(scheduled_decode_seqs),
+            num_batched_tokens=num_batched_tokens,
+        )
 
         return SchedulerOutputs(
             id=self._iteration_id,
             ignored_seq_ids=ignored_seq_ids,
             preempted_seq_ids=preempted_seq_ids,
             scheduled_seq_metadata_list=scheduled_seq_metadata_list,
+            active_prefill_seq_cap=active_prefill_seq_cap,
+            active_prefill_seq_count=active_prefill_seq_count,
+            deferred_prefill_seq_count=deferred_prefill_seq_count,
+            waiting_prefill_blocked_by_cap=waiting_prefill_blocked_by_cap,
+            waiting_prefill_blocked_by_min_chunk=waiting_prefill_blocked_by_min_chunk,
         )

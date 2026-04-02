@@ -1,5 +1,6 @@
 """A GPU worker class."""
 
+import csv
 import os
 import time
 from threading import Event, Thread
@@ -204,6 +205,69 @@ class BaseWorker:
             cuda_reserved_mb=cuda_reserved_mb,
         )
 
+    def _append_active_prefill_control_stats_csv_row(
+        self,
+        scheduler_outputs: SchedulerOutputs,
+        seq_metadata_list,
+    ) -> None:
+        csv_path = os.path.join(
+            self.config.replica_config.output_dir,
+            f"active_prefill_control_stats_rank{self.rank}.csv",
+        )
+
+        decode_tokens = 0
+        scheduled_prefill_seq_count = 0
+        scheduled_prefill_tokens = 0
+        batch_request_count = len(seq_metadata_list)
+        for seq_metadata in seq_metadata_list:
+            if seq_metadata.is_prompt:
+                scheduled_prefill_seq_count += 1
+                scheduled_prefill_tokens += seq_metadata.prompt_chunk_len
+            else:
+                decode_tokens += 1
+
+        avg_prefill_chunk = (
+            float(scheduled_prefill_tokens) / float(scheduled_prefill_seq_count)
+            if scheduled_prefill_seq_count
+            else 0.0
+        )
+
+        os.makedirs(os.path.dirname(csv_path) or ".", exist_ok=True)
+        write_header = not os.path.exists(csv_path) or os.path.getsize(csv_path) == 0
+        with open(csv_path, mode="a", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            if write_header:
+                writer.writerow(
+                    [
+                        "iteration_id",
+                        "active_prefill_seq_cap",
+                        "active_prefill_seq_count",
+                        "deferred_prefill_seq_count",
+                        "waiting_prefill_blocked_by_cap",
+                        "waiting_prefill_blocked_by_min_chunk",
+                        "batch_request_count",
+                        "decode_tokens",
+                        "scheduled_prefill_seq_count",
+                        "scheduled_prefill_tokens",
+                        "avg_prefill_chunk",
+                    ]
+                )
+            writer.writerow(
+                [
+                    scheduler_outputs.id,
+                    scheduler_outputs.active_prefill_seq_cap,
+                    scheduler_outputs.active_prefill_seq_count,
+                    scheduler_outputs.deferred_prefill_seq_count,
+                    scheduler_outputs.waiting_prefill_blocked_by_cap,
+                    scheduler_outputs.waiting_prefill_blocked_by_min_chunk,
+                    batch_request_count,
+                    decode_tokens,
+                    scheduled_prefill_seq_count,
+                    scheduled_prefill_tokens,
+                    avg_prefill_chunk,
+                ]
+            )
+
     @torch.inference_mode()
     def execute_model(
         self,
@@ -221,6 +285,16 @@ class BaseWorker:
              or self.config.scheduler_config.get_type() == SchedulerType.SARATHI)
             and self.config.scheduler_config.enable_select_stats_csv
         ):
+            if self.config.scheduler_config.get_type() == SchedulerType.OPT_SARATHI:
+                try:
+                    self._append_active_prefill_control_stats_csv_row(
+                        scheduler_outputs,
+                        seq_metadata_list,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to write active prefill control stats CSV row."
+                    )
             sampler_outputs = self.model_runner.run_with_select_csv(
                 seq_metadata_list,
             )

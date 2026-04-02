@@ -345,6 +345,20 @@ class OptSarathiSchedulerConfig(BaseSchedulerConfig):
         default=4,
         metadata={"help": "每轮最多按需借给 waiting prefills 的 seq 槽位数量。"},
     )
+    enable_active_prefill_control: bool = field(
+        default=False,
+        metadata={
+            "help": "是否显式限制 active unfinished prefill 的并发数，并为其分配最小有效 chunk。"
+        },
+    )
+    max_active_prefill_seqs: int = field(
+        default=8,
+        metadata={"help": "允许同时处于 active 状态的 unfinished prefill 序列上限。"},
+    )
+    min_active_prefill_chunk_size: int = field(
+        default=16,
+        metadata={"help": "单条 active unfinished prefill 每轮应获得的最小有效 chunk。"},
+    )
     enable_select_stats_csv: bool = field(
         default=False,
         metadata={
@@ -377,6 +391,10 @@ class OptSarathiSchedulerConfig(BaseSchedulerConfig):
             raise ValueError("prefill_reserve_waiting_threshold must be > 0.")
         if self.prefill_reserved_seq_slots < 0:
             raise ValueError("prefill_reserved_seq_slots must be >= 0.")
+        if self.max_active_prefill_seqs < 0:
+            raise ValueError("max_active_prefill_seqs must be >= 0.")
+        if self.min_active_prefill_chunk_size <= 0:
+            raise ValueError("min_active_prefill_chunk_size must be > 0.")
         if self.enable_prefill_slot_reservation:
             if self.prefill_reserved_seq_slots == 0:
                 raise ValueError(
@@ -386,6 +404,21 @@ class OptSarathiSchedulerConfig(BaseSchedulerConfig):
             if self.prefill_reserved_seq_slots >= self.max_num_seqs:
                 raise ValueError(
                     "prefill_reserved_seq_slots must be smaller than max_num_seqs."
+                )
+        if self.enable_active_prefill_control:
+            if self.max_active_prefill_seqs == 0:
+                raise ValueError(
+                    "max_active_prefill_seqs must be > 0 when "
+                    "enable_active_prefill_control is enabled."
+                )
+            if self.max_active_prefill_seqs > self.max_num_seqs:
+                raise ValueError(
+                    "max_active_prefill_seqs must be <= max_num_seqs."
+                )
+            max_batched_tokens = self.get_max_num_batched_tokens(max_model_len=0)
+            if self.min_active_prefill_chunk_size > max_batched_tokens:
+                raise ValueError(
+                    "min_active_prefill_chunk_size must be <= the scheduler token budget."
                 )
 
 
