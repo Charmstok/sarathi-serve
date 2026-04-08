@@ -206,3 +206,9 @@ embedding_output/
 dataset/
 example/parameter_selection/threshold_output
 *.pt
+
+# sarathi utils generated files
+sarathi/utils/**
+!sarathi/utils/
+!sarathi/utils/**/
+!sarathi/utils/**/*.py
