@@ -3,6 +3,9 @@
 import glob
 import json
 import os
+import re
+import time
+from pathlib import Path
 from collections import defaultdict
 from typing import Any, Iterator, List, Optional, Tuple
 
@@ -97,6 +100,119 @@ def _find_hf_weight_files(
     return sorted(hf_weights_files)
 
 
+def _get_incomplete_shard_info(
+    hf_weights_files: List[str],
+) -> Optional[Tuple[str, int, List[int]]]:
+    shard_pattern = re.compile(
+        r'^(?P<prefix>.+)-(?P<idx>\d+)-of-(?P<total>\d+)\.[^.]+$'
+    )
+    shard_groups = defaultdict(set)
+    shard_totals = {}
+
+    for weight_file in hf_weights_files:
+        match = shard_pattern.match(Path(weight_file).name)
+        if not match:
+            continue
+        prefix = match.group('prefix')
+        shard_groups[prefix].add(int(match.group('idx')))
+        shard_totals[prefix] = int(match.group('total'))
+
+    for prefix, shard_ids in shard_groups.items():
+        expected_total = shard_totals[prefix]
+        if len(shard_ids) != expected_total:
+            missing = sorted(set(range(1, expected_total + 1)) - shard_ids)
+            return prefix, expected_total, missing
+
+    return None
+
+
+def _format_missing_shard_ids(missing: List[int]) -> str:
+    missing_preview = ", ".join(f"{idx:05d}" for idx in missing[:8])
+    if len(missing) > 8:
+        missing_preview += ", ..."
+    return missing_preview
+
+
+def _download_hf_snapshot_with_retries(
+    model_name_or_path: str,
+    allow_patterns: List[str],
+    cache_dir: Optional[str],
+    use_safetensors: bool,
+    revision: Optional[str],
+    max_retries: int = 3,
+    retry_delay_secs: int = 3,
+) -> Tuple[str, List[str]]:
+    last_error: Optional[Exception] = None
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            hf_folder = snapshot_download(
+                model_name_or_path,
+                allow_patterns=allow_patterns,
+                cache_dir=cache_dir,
+                tqdm_class=Disabledtqdm,
+                revision=revision,
+            )
+            hf_weights_files = _find_hf_weight_files(
+                hf_folder, allow_patterns, use_safetensors
+            )
+
+            if len(hf_weights_files) == 0:
+                last_error = RuntimeError(
+                    f"Cannot find any model weights with `{model_name_or_path}` after "
+                    f"download attempt {attempt}/{max_retries}"
+                )
+                logger.warning(
+                    "Downloaded no model weights for %s on attempt %d/%d.",
+                    model_name_or_path,
+                    attempt,
+                    max_retries,
+                )
+            else:
+                incomplete_shard_info = _get_incomplete_shard_info(hf_weights_files)
+                if incomplete_shard_info is None:
+                    return hf_folder, hf_weights_files
+
+                prefix, expected_total, missing = incomplete_shard_info
+                last_error = RuntimeError(
+                    f"Incomplete model weight shards for `{model_name_or_path}` "
+                    f"after download attempt {attempt}/{max_retries}: {prefix} has "
+                    f"{expected_total - len(missing)}/{expected_total} shards. "
+                    f"Missing shard ids: {_format_missing_shard_ids(missing)}"
+                )
+                logger.warning(
+                    "Downloaded incomplete model weights for %s on attempt %d/%d: "
+                    "%s has %d/%d shards. Missing shard ids: %s",
+                    model_name_or_path,
+                    attempt,
+                    max_retries,
+                    prefix,
+                    expected_total - len(missing),
+                    expected_total,
+                    _format_missing_shard_ids(missing),
+                )
+        except Exception as exc:
+            last_error = exc
+            logger.warning(
+                "Failed to download model weights for %s on attempt %d/%d: %s",
+                model_name_or_path,
+                attempt,
+                max_retries,
+                exc,
+            )
+
+        if attempt < max_retries:
+            logger.warning(
+                "Retrying model weight download for %s in %d seconds.",
+                model_name_or_path,
+                retry_delay_secs,
+            )
+            time.sleep(retry_delay_secs)
+
+    assert last_error is not None
+    raise last_error
+
+
 def prepare_hf_model_weights(
     model_name_or_path: str,
     cache_dir: Optional[str] = None,
@@ -132,25 +248,54 @@ def prepare_hf_model_weights(
             except Exception:
                 hf_folder = None
 
+            incomplete_shard_info = _get_incomplete_shard_info(hf_weights_files)
+            if incomplete_shard_info is not None:
+                prefix, expected_total, missing = incomplete_shard_info
+                missing_preview = _format_missing_shard_ids(missing)
+                logger.warning(
+                    'Incomplete local model weights found for %s: %s has %d/%d shards; retrying snapshot download. Missing shard ids: %s',
+                    model_name_or_path,
+                    prefix,
+                    expected_total - len(missing),
+                    expected_total,
+                    missing_preview,
+                )
+                hf_weights_files = []
+
             if len(hf_weights_files) == 0:
                 logger.warning(
                     "No local model weights found for %s; retrying snapshot download.",
                     model_name_or_path,
                 )
-                hf_folder = snapshot_download(
-                    model_name_or_path,
+                hf_folder, hf_weights_files = _download_hf_snapshot_with_retries(
+                    model_name_or_path=model_name_or_path,
                     allow_patterns=allow_patterns,
                     cache_dir=cache_dir,
-                    tqdm_class=Disabledtqdm,
+                    use_safetensors=use_safetensors,
                     revision=revision,
-                )
-                hf_weights_files = _find_hf_weight_files(
-                    hf_folder, allow_patterns, use_safetensors
                 )
     else:
         hf_folder = model_name_or_path
         hf_weights_files = _find_hf_weight_files(
             hf_folder, allow_patterns, use_safetensors
+        )
+
+    incomplete_shard_info = _get_incomplete_shard_info(hf_weights_files)
+    if incomplete_shard_info is not None:
+        if use_safetensors and fall_back_to_pt:
+            return prepare_hf_model_weights(
+                model_name_or_path,
+                cache_dir=cache_dir,
+                use_safetensors=False,
+                fall_back_to_pt=False,
+                revision=revision,
+            )
+        prefix, expected_total, missing = incomplete_shard_info
+        missing_preview = _format_missing_shard_ids(missing)
+        raise RuntimeError(
+            f'Incomplete model weight shards for `{model_name_or_path}`: '
+            f'{prefix} has {expected_total - len(missing)}/{expected_total} shards. '
+            f'Missing shard ids: {missing_preview}'
         )
 
     if len(hf_weights_files) == 0 and use_safetensors and fall_back_to_pt:

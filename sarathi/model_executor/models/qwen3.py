@@ -96,6 +96,7 @@ class Qwen3Attention(nn.Module):
             rope_scaling: Optional[Dict[str, Any]] = None,
             rms_norm_eps: float = 1e-6,
             attention_bias: bool = False,
+            head_dim: Optional[int] = None,
     ):
         super().__init__()
         self.hidden_size = hidden_size
@@ -114,7 +115,9 @@ class Qwen3Attention(nn.Module):
 
         self.num_heads = self.total_num_heads // tensor_model_parallel_world_size
         self.num_kv_heads = self.total_num_kv_heads // tensor_model_parallel_world_size
-        self.head_dim = hidden_size // self.total_num_heads
+        self.head_dim = (
+            head_dim if head_dim is not None else hidden_size // self.total_num_heads
+        )
 
         self.scaling = self.head_dim ** -0.5
 
@@ -234,6 +237,9 @@ class Qwen3DecoderLayer(nn.Module):
             rope_scaling=rope_scaling,
             rms_norm_eps=config.rms_norm_eps,
             attention_bias=attention_bias,
+            head_dim=getattr(
+                config, "head_dim", config.hidden_size // config.num_attention_heads
+            ),
         )
 
         self.post_attention_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)

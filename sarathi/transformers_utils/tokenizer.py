@@ -8,6 +8,7 @@ from sarathi.logger import init_logger
 logger = init_logger(__name__)
 
 _FALLBACK_UNK_TOKEN = "[UNK]"
+_QWEN3_TOKENIZER_FALLBACK = "Qwen/Qwen3-8B"
 
 
 def _sanitize_tokens(
@@ -25,8 +26,46 @@ def _sanitize_tokens(
             sanitized.append(unk)
             replaced += 1
     if replaced:
-        logger.warning(f"Tokenizer produced {replaced} non-string tokens; replaced with {unk!r}.")
+        logger.warning(
+            f"Tokenizer produced {replaced} non-string tokens; replaced with {unk!r}."
+        )
     return sanitized
+
+
+def _load_tokenizer_candidate(
+    source: str,
+    *args,
+    local_files_only: bool,
+    trust_remote_code: bool,
+    **kwargs,
+) -> Union[PreTrainedTokenizer, PreTrainedTokenizerFast]:
+    base_kwargs = dict(kwargs)
+    base_kwargs["trust_remote_code"] = trust_remote_code
+    return AutoTokenizer.from_pretrained(
+        source,
+        *args,
+        local_files_only=local_files_only,
+        **base_kwargs,
+    )
+
+
+def _is_tokenizer_usable(
+    tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
+) -> bool:
+    try:
+        probe_ids = tokenizer("hello", add_special_tokens=False)["input_ids"]
+    except Exception:
+        return False
+    return bool(probe_ids) and getattr(tokenizer, "vocab_size", 0) > 1
+
+
+def _get_family_tokenizer_fallbacks(tokenizer_name: str) -> List[str]:
+    if (
+        tokenizer_name.startswith("Qwen/Qwen3-")
+        and tokenizer_name != _QWEN3_TOKENIZER_FALLBACK
+    ):
+        return [_QWEN3_TOKENIZER_FALLBACK]
+    return []
 
 
 def get_tokenizer(
@@ -53,51 +92,74 @@ def get_tokenizer(
     except Exception:
         pass
 
-    base_kwargs = dict(kwargs)
-    base_kwargs["trust_remote_code"] = trust_remote_code
+    candidates = [
+        (tokenizer_path, True),
+        (tokenizer_name, True),
+    ]
+    for fallback_name in _get_family_tokenizer_fallbacks(tokenizer_name):
+        candidates.append((fallback_name, True))
+        candidates.append((fallback_name, False))
+    candidates.append((tokenizer_name, False))
 
-    try:
-        tokenizer = AutoTokenizer.from_pretrained(
-            tokenizer_path,
-            *args,
-            local_files_only=True,
-            **base_kwargs,
-        )
-    except OSError:
-        tokenizer = AutoTokenizer.from_pretrained(
-            tokenizer_name,
-            *args,
-            **base_kwargs,
-        )
-    except TypeError as e:
-        # The LLaMA tokenizer causes a protobuf error in some environments.
-        err_msg = "Failed to load the tokenizer."
-        raise RuntimeError(err_msg) from e
-    except ValueError as e:
-        # If the error pertains to the tokenizer class not existing or not
-        # currently being imported, suggest using the --trust-remote-code flag.
-        if not trust_remote_code and (
-            "does not exist or is not currently imported." in str(e)
-            or "requires you to execute the tokenizer file" in str(e)
-        ):
-            err_msg = (
-                "Failed to load the tokenizer. If the tokenizer is a custom "
-                "tokenizer not yet available in the HuggingFace transformers "
-                "library, consider setting `trust_remote_code=True` in LLM "
-                "or using the `--trust-remote-code` flag in the CLI."
+    errors = []
+    for source, local_only in candidates:
+        try:
+            tokenizer = _load_tokenizer_candidate(
+                source,
+                *args,
+                local_files_only=local_only,
+                trust_remote_code=trust_remote_code,
+                **kwargs,
             )
+        except OSError as e:
+            errors.append(f"{source} (local_only={local_only}): {e}")
+            continue
+        except TypeError as e:
+            err_msg = "Failed to load the tokenizer."
             raise RuntimeError(err_msg) from e
-        else:
-            raise e
+        except ValueError as e:
+            if not trust_remote_code and (
+                "does not exist or is not currently imported." in str(e)
+                or "requires you to execute the tokenizer file" in str(e)
+            ):
+                err_msg = (
+                    "Failed to load the tokenizer. If the tokenizer is a custom "
+                    "tokenizer not yet available in the HuggingFace transformers "
+                    "library, consider setting `trust_remote_code=True` in LLM "
+                    "or using the `--trust-remote-code` flag in the CLI."
+                )
+                raise RuntimeError(err_msg) from e
+            errors.append(f"{source} (local_only={local_only}): {e}")
+            continue
 
-    if not isinstance(tokenizer, PreTrainedTokenizerFast):
-        logger.warning(
-            "Using a slow tokenizer. This might cause a significant "
-            "slowdown. Consider using a fast tokenizer instead."
+        if _is_tokenizer_usable(tokenizer):
+            if source != tokenizer_name:
+                logger.warning(
+                    "Using tokenizer from %s for %s because the original tokenizer resources are incomplete.",
+                    source,
+                    tokenizer_name,
+                )
+            if not isinstance(tokenizer, PreTrainedTokenizerFast):
+                logger.warning(
+                    "Using a slow tokenizer. This might cause a significant "
+                    "slowdown. Consider using a fast tokenizer instead."
+                )
+            return tokenizer
+
+        errors.append(
+            f"{source} (local_only={local_only}): unusable tokenizer "
+            f"vocab_size={getattr(tokenizer, 'vocab_size', None)}"
         )
-    return tokenizer
+
+    raise RuntimeError(
+        "Failed to load a usable tokenizer for "
+        f"{tokenizer_name}. Tried: {'; '.join(errors)}"
+    )
 
 
+# Based on
+# https://github.com/huggingface/text-generation-inference/blob/v0.9.4/server/text_generation_server/models/model.py#L62C9-L62C15
+# under Apache 2.0 license
 def _convert_tokens_to_string_with_added_encoders(
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
     output_tokens: List[str],
