@@ -6,8 +6,8 @@ from pathlib import Path
 
 FIGURE_NAME = "prefill_e2e_time(时间预算)"
 TITLE = "prefill_e2e_time（时间预算）"
-X_LABEL = "Average Inter-Arrival Time (s)"
-Y_LABEL = "Latency (ms)"
+X_LABEL = "平均请求到达间隔（秒）"
+Y_LABEL = "延迟（毫秒）"
 
 LATIN_SERIF_FONT_CANDIDATES = [
     "Times New Roman",
@@ -33,15 +33,17 @@ INTER_ARRIVAL_SECONDS = [0.1, 0.15, 0.3, 0.5, 1.0, 1.5]
 
 # Replace the values below with your measured percentiles.
 # Each list must align one-to-one with INTER_ARRIVAL_SECONDS.
-P99_MS = [80, 82, 84, 85, 86, 88]
+P99_MS = [
+    80, 82, 84, 85, 86, 88
+]
 P90_MS = [
-    # e.g. 72, 74, 76, 78, 79, 80
+    72, 74, 76, 78, 79, 80
 ]
 P80_MS = [
-    # e.g. 68, 70, 72, 74, 75, 76
+    68, 70, 72, 74, 75, 76
 ]
 P50_MS = [
-    # e.g. 55, 57, 59, 60, 61, 62
+    55, 57, 59, 60, 61, 62
 ]
 
 
@@ -82,6 +84,22 @@ def get_mixed_serif_font_properties():
     except ImportError:
         return None
     return font_manager.FontProperties(family=SERIF_FONT_CANDIDATES)
+
+
+def get_cjk_serif_font_properties():
+    try:
+        from matplotlib import font_manager
+    except ImportError:
+        return None
+
+    for font_name in CJK_SERIF_FONT_CANDIDATES:
+        try:
+            font_path = font_manager.findfont(font_name, fallback_to_default=False)
+        except Exception:
+            continue
+        if font_path:
+            return font_manager.FontProperties(fname=font_path)
+    return None
 
 
 def build_latency_series() -> dict[str, tuple[list[float], list[float]]]:
@@ -168,8 +186,13 @@ def plot_percentiles(output_dir: Path, figure_name: str, title: str | None) -> t
     x_ticks = sorted(INTER_ARRIVAL_SECONDS)
     y_min, y_max = get_y_limits(series)
 
-    ax.set_xlabel(X_LABEL)
-    ax.set_ylabel(Y_LABEL)
+    axis_label_font = get_cjk_serif_font_properties()
+    if axis_label_font is not None:
+        ax.set_xlabel(X_LABEL, fontproperties=axis_label_font)
+        ax.set_ylabel(Y_LABEL, fontproperties=axis_label_font)
+    else:
+        ax.set_xlabel(X_LABEL)
+        ax.set_ylabel(Y_LABEL)
     ax.set_xticks(x_ticks)
     ax.set_xticklabels([f"{tick:g}" for tick in x_ticks], rotation=25, ha="right")
     ax.tick_params(axis="x", pad=6)
@@ -208,7 +231,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path(__file__).resolve().parent / "paper_plots",
+        default=Path(__file__).resolve().parent / "paper_plots" / "latency_percentiles",
         help="Directory used to store the generated figure files.",
     )
     parser.add_argument(
