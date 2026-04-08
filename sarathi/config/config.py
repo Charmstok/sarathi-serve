@@ -287,6 +287,12 @@ class SarathiSchedulerConfig(BaseSchedulerConfig):
             "help": "在基准测试中启用该选项，以在模型执行前统计 seq_metadata_list 特征并写入 CSV：decode_tokens、prefill_tokens、prefill_processed_tokens、latency_ms。"
         },
     )
+    enable_active_prefill_control_stats_csv: bool = field(
+        default=False,
+        metadata={
+            "help": "是否将 active prefill control 相关调度统计写入 active_prefill_control_stats_rank*.csv；该开关独立于 enable_select_stats_csv。"
+        },
+    )
 
     def get_max_num_batched_tokens(self, max_model_len: int):
         # Sarathi never schedules more than chunk_size tokens in one iteration.
@@ -366,6 +372,12 @@ class OptSarathiSchedulerConfig(BaseSchedulerConfig):
         default=False,
         metadata={
             "help": "在基准测试中启用该选项，以在模型执行前统计 seq_metadata_list 特征并写入 CSV：decode_tokens、prefill_tokens、prefill_processed_tokens、latency_ms。"
+        },
+    )
+    enable_active_prefill_control_stats_csv: bool = field(
+        default=False,
+        metadata={
+            "help": "是否将 active prefill control 相关调度统计写入 active_prefill_control_stats_rank*.csv；该开关独立于 enable_select_stats_csv。"
         },
     )
 

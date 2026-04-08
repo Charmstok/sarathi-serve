@@ -280,21 +280,26 @@ class BaseWorker:
 
         runtime_stats = self._collect_gpu_mem_stats()
 
+        should_write_active_prefill_control_stats = (
+            self.config.scheduler_config.get_type() == SchedulerType.OPT_SARATHI
+            and self.config.scheduler_config.enable_active_prefill_control_stats_csv
+        )
+        if should_write_active_prefill_control_stats:
+            try:
+                self._append_active_prefill_control_stats_csv_row(
+                    scheduler_outputs,
+                    seq_metadata_list,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to write active prefill control stats CSV row."
+                )
+
         if (
             (self.config.scheduler_config.get_type() == SchedulerType.OPT_SARATHI
              or self.config.scheduler_config.get_type() == SchedulerType.SARATHI)
             and self.config.scheduler_config.enable_select_stats_csv
         ):
-            if self.config.scheduler_config.get_type() == SchedulerType.OPT_SARATHI:
-                try:
-                    self._append_active_prefill_control_stats_csv_row(
-                        scheduler_outputs,
-                        seq_metadata_list,
-                    )
-                except Exception:
-                    logger.exception(
-                        "Failed to write active prefill control stats CSV row."
-                    )
             sampler_outputs = self.model_runner.run_with_select_csv(
                 seq_metadata_list,
             )
