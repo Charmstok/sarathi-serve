@@ -189,18 +189,9 @@ class BaseSchedulerConfig(BasePolyConfig):
     policy_name: str = field(
         default="fcfs",
         metadata={
-            "help": f"调度器选择哪种调度策略，支持的策略有：{PolicyFactory.get_available_policies()}"
+            "help": f"调度器选择哪种调度策略，支持的策略有：fcfs."
         },
     )
-
-    def __post_init__(self):
-        if self.policy_name not in PolicyFactory.get_available_policies():
-            msg = (
-                f"错误: 不支持的策略 '{self.policy_name}'。\n"
-                f"支持的策略有: {PolicyFactory.get_available_policies()}"
-            )
-            raise ValueError(msg)
-
 
     @abstractmethod
     def get_max_num_batched_tokens(self, max_model_len: int):
