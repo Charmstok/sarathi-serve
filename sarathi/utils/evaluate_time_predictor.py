@@ -4,6 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
+
 import torch
 
 from sarathi.time_balance.config import MODEL_CACHE_PATH, TEST_CSV_PATH
@@ -23,11 +24,34 @@ CJK_SERIF_FONT_CANDIDATES = [
     "Noto Serif CJK JP",
 ]
 
-SERIF_FONT_CANDIDATES = (
-    LATIN_SERIF_FONT_CANDIDATES
-    + CJK_SERIF_FONT_CANDIDATES
-    + ["DejaVu Serif"]
+CHINESE_FONT_SIZE = 10.5
+ENGLISH_FONT_SIZE = 10.5
+TITLE_FONT_SIZE = 10.5
+TICK_FONT_SIZE = 10.5
+LEGEND_FONT_SIZE = 10.5
+ANNOTATION_FONT_SIZE = 9.5
+
+SIMSUN_FONT_PATH = Path("/usr/share/fonts/truetype/simsun/SIMSUN.ttf")
+TIMES_NEW_ROMAN_FONT_PATH = Path(
+    "/usr/share/fonts/truetype/msttcorefonts/Times_New_Roman.ttf"
 )
+
+SERIF_FONT_CANDIDATES = [
+    "Times New Roman",
+    "SimSun",
+    "DejaVu Serif",
+]
+
+
+def register_paper_fonts() -> None:
+    try:
+        from matplotlib import font_manager
+    except ImportError:
+        return
+
+    for font_path in [SIMSUN_FONT_PATH, TIMES_NEW_ROMAN_FONT_PATH]:
+        if font_path.exists():
+            font_manager.fontManager.addfont(str(font_path))
 
 
 def get_plot_modules():
@@ -35,6 +59,7 @@ def get_plot_modules():
         import matplotlib
 
         matplotlib.use("Agg")
+        register_paper_fonts()
         import matplotlib.pyplot as plt
     except ImportError as exc:
         raise RuntimeError(
@@ -46,17 +71,28 @@ def get_plot_modules():
 def configure_plot_style(plt) -> None:
     plt.rcParams.update(
         {
-            "font.family": "serif",
+            "font.family": SERIF_FONT_CANDIDATES,
             "font.serif": SERIF_FONT_CANDIDATES,
-            "axes.linewidth": 1.0,
-            "axes.labelsize": 12,
-            "axes.titlesize": 12,
-            "xtick.labelsize": 10,
-            "ytick.labelsize": 10,
-            "legend.fontsize": 10,
+            "axes.linewidth": 0.9,
+            "axes.labelsize": CHINESE_FONT_SIZE,
+            "axes.titlesize": TITLE_FONT_SIZE,
+            "xtick.labelsize": TICK_FONT_SIZE,
+            "ytick.labelsize": TICK_FONT_SIZE,
+            "legend.fontsize": LEGEND_FONT_SIZE,
             "axes.unicode_minus": False,
             "pdf.fonttype": 42,
             "ps.fonttype": 42,
+            "figure.dpi": 150,
+            "savefig.dpi": 600,
+            "savefig.bbox": "tight",
+            "savefig.pad_inches": 0.04,
+            "xtick.direction": "in",
+            "ytick.direction": "in",
+            "xtick.major.size": 3.0,
+            "ytick.major.size": 3.0,
+            "xtick.major.width": 0.8,
+            "ytick.major.width": 0.8,
+            "legend.frameon": False,
         }
     )
 
@@ -66,6 +102,9 @@ def get_cjk_serif_font_properties():
         from matplotlib import font_manager
     except ImportError:
         return None
+
+    if SIMSUN_FONT_PATH.exists():
+        return font_manager.FontProperties(fname=str(SIMSUN_FONT_PATH))
 
     for font_name in CJK_SERIF_FONT_CANDIDATES:
         try:
@@ -77,25 +116,70 @@ def get_cjk_serif_font_properties():
     return None
 
 
+def get_latin_serif_font_properties():
+    try:
+        from matplotlib import font_manager
+    except ImportError:
+        return None
+
+    if TIMES_NEW_ROMAN_FONT_PATH.exists():
+        return font_manager.FontProperties(fname=str(TIMES_NEW_ROMAN_FONT_PATH))
+
+    for font_name in LATIN_SERIF_FONT_CANDIDATES:
+        try:
+            font_path = font_manager.findfont(font_name, fallback_to_default=False)
+        except Exception:
+            continue
+        if font_path:
+            return font_manager.FontProperties(fname=font_path)
+    return None
+
+
+def get_axis_label_font_properties():
+    font = get_cjk_serif_font_properties()
+    if font is not None:
+        font.set_size(CHINESE_FONT_SIZE)
+    return font
+
+
+def get_title_font_properties():
+    font = get_cjk_serif_font_properties()
+    if font is not None:
+        font.set_size(TITLE_FONT_SIZE)
+    return font
+
+
+def get_legend_font_properties():
+    font = get_cjk_serif_font_properties()
+    if font is not None:
+        font.set_size(LEGEND_FONT_SIZE)
+    return font
+
+
+def get_annotation_font_properties():
+    font = get_latin_serif_font_properties()
+    if font is not None:
+        font.set_size(ANNOTATION_FONT_SIZE)
+    return font
+
+
 def set_plot_title(ax, title: str) -> None:
-    title_font = get_cjk_serif_font_properties()
+    title_font = get_title_font_properties()
     if title_font is not None:
-        ax.set_title(title, pad=10, fontproperties=title_font)
+        ax.set_title(title, pad=6, fontproperties=title_font)
     else:
-        ax.set_title(title, pad=10)
+        ax.set_title(title, pad=6)
 
 
-def set_legend(ax) -> None:
-    legend_font = get_cjk_serif_font_properties()
-    if legend_font is not None:
-        ax.legend(
-            frameon=True,
-            framealpha=0.95,
-            edgecolor="#d9d9d9",
-            prop=legend_font,
-        )
-    else:
-        ax.legend(frameon=True, framealpha=0.95, edgecolor="#d9d9d9")
+def set_legend(ax, loc: str = "best") -> None:
+    ax.legend(loc=loc, frameon=False, handlelength=1.8)
+
+
+def apply_paper_axes(ax) -> None:
+    ax.spines["top"].set_visible(True)
+    ax.spines["right"].set_visible(True)
+    ax.grid(True, axis="y", linestyle="--", linewidth=0.45, alpha=0.28)
+    ax.tick_params(axis="both", which="major", pad=3)
 
 
 def parse_args() -> argparse.Namespace:
@@ -209,39 +293,36 @@ def plot_predicted_vs_actual(
     hi = max(float(sampled_actual.max().item()), float(sampled_predicted.max().item()))
     pad = max(2.0, (hi - lo) * 0.05)
 
-    fig, ax = plt.subplots(figsize=(5.8, 4.6))
+    fig, ax = plt.subplots(figsize=(5.6, 4.2))
     ax.scatter(
         sampled_actual.numpy(),
         sampled_predicted.numpy(),
-        s=16,
-        alpha=0.45,
-        color="#1f77b4",
+        s=12,
+        alpha=0.38,
+        color="#2f5d8c",
         edgecolors="none",
+        rasterized=True,
         label="样本点",
     )
     ax.plot(
         [lo - pad, hi + pad],
         [lo - pad, hi + pad],
         linestyle="--",
-        linewidth=1.3,
-        color="#d62728",
-        label="理想参考线",
+        linewidth=1.0,
+        color="#b33a3a",
+        label="理想参考线 y=x",
     )
     ax.set_xlim(lo - pad, hi + pad)
     ax.set_ylim(lo - pad, hi + pad)
-    axis_label_font = get_cjk_serif_font_properties()
-    if axis_label_font is not None:
-        ax.set_xlabel("真实延迟（毫秒）", fontproperties=axis_label_font)
-        ax.set_ylabel("预测延迟（毫秒）", fontproperties=axis_label_font)
-    else:
-        ax.set_xlabel("真实延迟（毫秒）")
-        ax.set_ylabel("预测延迟（毫秒）")
-    set_plot_title(ax, "预测值-真实值散点图")
-    ax.grid(True, linestyle="--", linewidth=0.8, alpha=0.4)
-    set_legend(ax)
-    fig.tight_layout()
-    fig.savefig(output_path.with_suffix(".pdf"), bbox_inches="tight")
-    fig.savefig(output_path.with_suffix(".png"), dpi=300, bbox_inches="tight")
+    ax.set_xlabel("真实延迟（毫秒）")
+    ax.set_ylabel("预测延迟（毫秒）")
+    set_plot_title(ax, "预测值与真实值对比")
+    apply_paper_axes(ax)
+    ax.set_aspect("equal", adjustable="box")
+    set_legend(ax, loc="upper left")
+    fig.tight_layout(pad=1.1)
+    fig.savefig(output_path.with_suffix(".pdf"))
+    fig.savefig(output_path.with_suffix(".png"))
     plt.close(fig)
 
 
@@ -258,35 +339,95 @@ def plot_absolute_error_cdf(
     cdf = torch.arange(1, sorted_error.numel() + 1, dtype=torch.float32)
     cdf = cdf / float(sorted_error.numel())
 
-    fig, ax = plt.subplots(figsize=(5.8, 4.2))
-    ax.plot(
+    max_error = float(sorted_error[-1].item())
+    x_max = max_error * 1.05 if max_error > 0.0 else 1.0
+
+    fig, ax = plt.subplots(figsize=(5.6, 4.0))
+    ax.step(
         sorted_error.numpy(),
         cdf.numpy(),
-        color="#2ca02c",
-        linewidth=2.0,
+        where="post",
+        color="#2b7b43",
+        linewidth=1.6,
+        label="绝对误差 CDF",
     )
-    for threshold, color in [(5.0, "#7f7f7f"), (10.0, "#ff7f0e")]:
-        ax.axvline(
-            threshold,
-            linestyle="--",
-            linewidth=1.0,
+    for threshold, color in [(5.0, "#d62728")]:
+        accuracy = float((abs_error <= threshold).to(torch.float32).mean().item())
+        if threshold <= x_max:
+            ax.axvline(
+                threshold,
+                linestyle=(0, (5, 3)),
+                linewidth=0.9,
+                color=color,
+                alpha=0.8,
+                label=f"<= {threshold:.0f} ms: {accuracy:.1%}",
+            )
+        ax.axhline(
+            accuracy,
+            linestyle=(0, (5, 3)),
+            linewidth=0.9,
             color=color,
             alpha=0.8,
         )
-    axis_label_font = get_cjk_serif_font_properties()
-    if axis_label_font is not None:
-        ax.set_xlabel("绝对误差（毫秒）", fontproperties=axis_label_font)
-        ax.set_ylabel("累积分布函数", fontproperties=axis_label_font)
-    else:
-        ax.set_xlabel("绝对误差（毫秒）")
-        ax.set_ylabel("累积分布函数")
-    set_plot_title(ax, "绝对误差累积分布图")
-    ax.set_xlim(left=0.0)
-    ax.set_ylim(0.0, 1.0)
-    ax.grid(True, linestyle="--", linewidth=0.8, alpha=0.4)
-    fig.tight_layout()
-    fig.savefig(output_path.with_suffix(".pdf"), bbox_inches="tight")
-    fig.savefig(output_path.with_suffix(".png"), dpi=300, bbox_inches="tight")
+
+    quantile_styles = [
+        (0.50, "P50", "o"),
+        (0.90, "P90", "s"),
+        (0.95, "P95", "^"),
+        (0.99, "P99", "D"),
+    ]
+    quantile_color = "#000000"
+    quantile_handles = []
+    quantile_labels = []
+    for quantile, label, marker in quantile_styles:
+        value = float(torch.quantile(abs_error, quantile).item())
+        ax.axvline(
+            value,
+            ymin=0.0,
+            ymax=quantile,
+            linestyle=":",
+            linewidth=0.7,
+            color=quantile_color,
+            alpha=0.45,
+        )
+        handle = ax.scatter(
+            [value],
+            [quantile],
+            s=30,
+            marker=marker,
+            facecolor=quantile_color,
+            edgecolor="white",
+            linewidth=0.5,
+            zorder=3,
+            label="_nolegend_",
+        )
+        quantile_handles.append(handle)
+        quantile_labels.append(f"{label}={value:.2f} ms")
+
+    quantile_legend = ax.legend(
+        handles=quantile_handles,
+        labels=quantile_labels,
+        loc="upper right",
+        frameon=True,
+        framealpha=0.92,
+        edgecolor="#d9d9d9",
+        facecolor="white",
+        fontsize=ANNOTATION_FONT_SIZE,
+        borderpad=0.35,
+        handletextpad=0.5,
+        labelspacing=0.3,
+    )
+    ax.add_artist(quantile_legend)
+    ax.set_xlabel("绝对误差（毫秒）")
+    ax.set_ylabel("累积分布函数")
+    set_plot_title(ax, "绝对误差累积分布")
+    ax.set_xlim(0.0, x_max)
+    ax.set_ylim(0.0, 1.005)
+    apply_paper_axes(ax)
+    set_legend(ax, loc="lower right")
+    fig.tight_layout(pad=1.1)
+    fig.savefig(output_path.with_suffix(".pdf"))
+    fig.savefig(output_path.with_suffix(".png"))
     plt.close(fig)
 
 

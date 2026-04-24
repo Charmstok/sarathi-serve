@@ -9,9 +9,11 @@ TARGET_LATENCY_MS: Optional[float] = None
 
 CSV_RELATIVE_PATH = (
     "offline_inference_output/"
-    #"2026-04-13_17-54-58-时间预算-105ms/"
-
     "2026-04-01_14-31-21-token预算-1024tokens（对比2）/"
+    #"2026-04-22_17-14-56-时间预算-105ms/"
+
+
+
     "replica_0/select_stats_rank0.csv"
 )
 
@@ -23,16 +25,35 @@ LATIN_SERIF_FONT_CANDIDATES = [
 CJK_SERIF_FONT_CANDIDATES = [
     "SimSun",
     "Songti SC",
-    "Noto Serif CJK SC",
-    "AR PL UMing CN",
-    "Noto Serif CJK JP",
 ]
 
-SERIF_FONT_CANDIDATES = (
-    LATIN_SERIF_FONT_CANDIDATES
-    + CJK_SERIF_FONT_CANDIDATES
-    + ["DejaVu Serif"]
+CHINESE_FONT_SIZE = 10.5
+ENGLISH_FONT_SIZE = 10.5
+TITLE_FONT_SIZE = 10.5
+TICK_FONT_SIZE = 10.5
+LEGEND_FONT_SIZE = 10.5
+
+SIMSUN_FONT_PATH = Path("/usr/share/fonts/truetype/simsun/SIMSUN.ttf")
+TIMES_NEW_ROMAN_FONT_PATH = Path(
+    "/usr/share/fonts/truetype/msttcorefonts/Times_New_Roman.ttf"
 )
+
+SERIF_FONT_CANDIDATES = [
+    "Times New Roman",
+    "SimSun",
+    "DejaVu Serif",
+]
+
+
+def register_paper_fonts() -> None:
+    try:
+        from matplotlib import font_manager
+    except ImportError:
+        return
+
+    for font_path in [SIMSUN_FONT_PATH, TIMES_NEW_ROMAN_FONT_PATH]:
+        if font_path.exists():
+            font_manager.fontManager.addfont(str(font_path))
 
 
 def get_plot_modules():
@@ -40,6 +61,7 @@ def get_plot_modules():
         import matplotlib
 
         matplotlib.use("Agg")
+        register_paper_fonts()
         import matplotlib.pyplot as plt
     except ImportError as exc:
         raise RuntimeError(
@@ -51,14 +73,14 @@ def get_plot_modules():
 def configure_plot_style(plt) -> None:
     plt.rcParams.update(
         {
-            "font.family": "serif",
+            "font.family": SERIF_FONT_CANDIDATES,
             "font.serif": SERIF_FONT_CANDIDATES,
             "axes.linewidth": 1.0,
-            "axes.labelsize": 12,
-            "axes.titlesize": 12,
-            "xtick.labelsize": 10,
-            "ytick.labelsize": 10,
-            "legend.fontsize": 10,
+            "axes.labelsize": CHINESE_FONT_SIZE,
+            "axes.titlesize": TITLE_FONT_SIZE,
+            "xtick.labelsize": TICK_FONT_SIZE,
+            "ytick.labelsize": TICK_FONT_SIZE,
+            "legend.fontsize": LEGEND_FONT_SIZE,
             "axes.unicode_minus": False,
             "pdf.fonttype": 42,
             "ps.fonttype": 42,
@@ -72,6 +94,9 @@ def get_cjk_serif_font_properties():
     except ImportError:
         return None
 
+    if SIMSUN_FONT_PATH.exists():
+        return font_manager.FontProperties(fname=str(SIMSUN_FONT_PATH))
+
     for font_name in CJK_SERIF_FONT_CANDIDATES:
         try:
             font_path = font_manager.findfont(font_name, fallback_to_default=False)
@@ -83,37 +108,22 @@ def get_cjk_serif_font_properties():
 
 
 def set_axis_labels(ax, xlabel: str, ylabel: str) -> None:
-    cjk_font = get_cjk_serif_font_properties()
-    if cjk_font is not None:
-        ax.set_xlabel(xlabel, fontproperties=cjk_font)
-        ax.set_ylabel(ylabel, fontproperties=cjk_font)
-    else:
-        ax.set_xlabel(xlabel)
-        ax.set_ylabel(ylabel)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
 
 
 def set_title(ax, title: str) -> None:
-    cjk_font = get_cjk_serif_font_properties()
-    if cjk_font is not None:
-        ax.set_title(title, pad=10, fontproperties=cjk_font)
-    else:
-        ax.set_title(title, pad=10)
+    ax.set_title(title, pad=10)
 
 
 def set_legend(ax) -> None:
-    cjk_font = get_cjk_serif_font_properties()
-    legend_kwargs = {
-        "loc": "lower left",
-        "bbox_to_anchor": (0.01, 0.01),
-        "frameon": True,
-        "framealpha": 0.95,
-        "edgecolor": "#d9d9d9",
-    }
-    if cjk_font is not None:
-        legend_kwargs["prop"] = cjk_font
-        ax.legend(**legend_kwargs)
-    else:
-        ax.legend(**legend_kwargs)
+    ax.legend(
+        loc="lower left",
+        bbox_to_anchor=(0.01, 0.01),
+        frameon=True,
+        framealpha=0.95,
+        edgecolor="#d9d9d9",
+    )
 
 
 def load_latency_values(csv_path: Path) -> list[float]:
@@ -138,14 +148,15 @@ def get_latency_axis_limits(latency_values: list[float]) -> tuple[float, float]:
     return y_min, y_max
 
 
-def plot_latency(csv_path: Path, latency_values: list[float]) -> Path:
+def plot_latency(csv_path: Path, latency_values: list[float]) -> tuple[Path, Path]:
     plt = get_plot_modules()
     configure_plot_style(plt)
 
     batch_indices = list(range(len(latency_values)))
     output_dir = csv_path.parent / "plot_batch"
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / f"{csv_path.stem}_latency_ms.png"
+    png_output_path = output_dir / f"{csv_path.stem}_latency_ms.png"
+    pdf_output_path = output_dir / f"{csv_path.stem}_latency_ms.pdf"
     y_min, y_max = get_latency_axis_limits(latency_values)
 
     fig, ax = plt.subplots(figsize=(12, 6))
@@ -180,10 +191,11 @@ def plot_latency(csv_path: Path, latency_values: list[float]) -> Path:
     ax.grid(True, linestyle="--", alpha=0.4)
     set_legend(ax)
     fig.tight_layout()
-    fig.savefig(output_path, dpi=200)
+    fig.savefig(png_output_path, dpi=200)
+    fig.savefig(pdf_output_path)
     plt.close(fig)
 
-    return output_path
+    return png_output_path, pdf_output_path
 
 
 def compute_percentile(sorted_values: list[float], percentile: float) -> float:
@@ -277,10 +289,11 @@ def main() -> None:
     if not latency_values:
         raise ValueError("CSV 中没有可用的 `latency_ms` 数据。")
 
-    line_chart_path = plot_latency(csv_path, latency_values)
+    png_chart_path, pdf_chart_path = plot_latency(csv_path, latency_values)
     summary_json_path = save_latency_summary(csv_path, latency_values)
     print(f"CSV 路径: {csv_path}")
-    print(f"散点图已保存: {line_chart_path}")
+    print(f"PNG 散点图已保存: {png_chart_path}")
+    print(f"PDF 散点图已保存: {pdf_chart_path}")
     print(f"统计结果已保存: {summary_json_path}")
 
 
