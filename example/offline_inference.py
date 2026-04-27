@@ -10,7 +10,7 @@ from sarathi.utils.output_utils import process_and_save_outputs
 
 BASE_OUTPUT_DIR = "./offline_inference_output"
 
-PROMPTS_NUMBER = 100
+PROMPTS_NUMBER = 200
 
 prompts = get_prompts_from_dataset("dataset/ShareGPT_V3_unfiltered_cleaned_split.json", PROMPTS_NUMBER, random_sample=False)
 
@@ -25,7 +25,7 @@ replica_config = ReplicaConfig(
 )
 
 model_config = ModelConfig(
-    model="Qwen/Qwen3-8B",
+    model="/root/.cache/huggingface/hub/models--Qwen--Qwen3-8B/snapshots/b968826d9c46dd6066d109eabc6255188de91218/",
     max_model_len=512,
 )
 
@@ -35,8 +35,8 @@ parallel_config = ParallelConfig(
 )
 
 scheduler_config = OptSarathiSchedulerConfig(
-    chunk_size=256,
-    max_num_seqs=32,
+    chunk_size=1024,
+    max_num_seqs=10,
     policy_name="aging",
 )
 

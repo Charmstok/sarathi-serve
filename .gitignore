@@ -206,3 +206,5 @@ example/threshold/threshold_output
 csrc.zip
 qwen3-8B.tar.xz
 qwen-7b.7z.*
+env2
+paper_figures

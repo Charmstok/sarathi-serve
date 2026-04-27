@@ -203,6 +203,7 @@ class OptSarathiScheduler(BaseScheduler):
         # sequence groups are added to the front and the new sequence groups
         # are added to the back.
         # 只要还有 Budget (num_batched_tokens < chunk_size)，就尝试加入新请求
+        # self.waiting = self.policy.sort_by_priority(now, self.waiting)
         while self.waiting:
             seq = self.waiting[0]
 
