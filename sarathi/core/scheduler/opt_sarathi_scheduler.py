@@ -82,10 +82,12 @@ class OptSarathiScheduler(BaseScheduler):
                 np.ceil(self.chunk_schedule_max_tokens / self.chunk_schedule_stages)
             )
 
+        # 加载训练好的离线 MLP 模型 
         assert os.path.exists(
             MODEL_CACHE_PATH
         ), f"TimePredictor cache missing: {MODEL_CACHE_PATH}"
         self._time_predictor = TimePredictor.load(MODEL_CACHE_PATH)
+        # 初始化网格搜索
         self._chunk_search = ChunkSearchFactory.get_search(
             "grid", step=self.chunk_search_granularity
         )
@@ -110,6 +112,7 @@ class OptSarathiScheduler(BaseScheduler):
     def get_block_space_manager_class(self):
         return SarathiBlockSpaceManager
 
+    # 时间预测函数 f_theta
     def _predict_latency_ms(
         self,
         *,
@@ -152,6 +155,7 @@ class OptSarathiScheduler(BaseScheduler):
             float(stats.cuda_reserved_mb),
         )
 
+    # Score函数 公式(3-6)
     def _chunk_target_score(
         self,
         *,
@@ -191,6 +195,7 @@ class OptSarathiScheduler(BaseScheduler):
             )
         )
 
+    # 定义最小有效预填充分块 L_min
     def _get_min_meaningful_prefill_tokens(self, seq: Sequence) -> int:
         remaining_prompt = (
             seq.get_prompt_len() - seq.get_num_prompt_tokens_stage_processed()
@@ -201,6 +206,7 @@ class OptSarathiScheduler(BaseScheduler):
             return 1
         return min(remaining_prompt, self.min_active_prefill_chunk_size)
 
+    # 定义动态活跃度上界 C_t，式(4-3)
     def _get_active_prefill_seq_cap(
         self,
         *,
@@ -220,6 +226,7 @@ class OptSarathiScheduler(BaseScheduler):
             0,
         )
         token_limited_cap = remaining_token_budget // self.min_active_prefill_chunk_size
+        # 同时考虑最大活跃预填充数、剩余序列槽位、剩余Token空间
         return min(
             self.max_active_prefill_seqs,
             remaining_seq_slots,
@@ -415,6 +422,7 @@ class OptSarathiScheduler(BaseScheduler):
         for seq in running_prefills:
             assert not seq.prompt_stage_processing_finished
 
+            # 检查当前活跃的预填充数量是否已经达到上界
             current_active_prefill_cap = self._get_active_prefill_seq_cap(
                 decode_seq_count=len(scheduled_decode_seqs),
                 num_batched_tokens=num_batched_tokens,
@@ -440,6 +448,7 @@ class OptSarathiScheduler(BaseScheduler):
 
             seq_processed = seq.get_num_prompt_tokens_stage_processed()
 
+            # 选择最优分块
             def score(chunk_size: int) -> float:
                 predicted_ms = self._predict_latency_ms(
                     decode_tokens=current_decode_tokens,
@@ -463,6 +472,7 @@ class OptSarathiScheduler(BaseScheduler):
                     target_time_ms=target_time_ms,
                 )
 
+            # _chunk_search 是(3-4)定义的离散候选集合
             next_num_prefill_tokens = self._chunk_search.min_score(1, high, score)
             min_meaningful_prefill_tokens = self._get_min_meaningful_prefill_tokens(seq)
             forced_prefill_tokens = min(high, min_meaningful_prefill_tokens)
@@ -488,6 +498,7 @@ class OptSarathiScheduler(BaseScheduler):
                     running.append(seq)
                     continue
 
+            # 检查分块是否小于有效阈值
             if (
                 self.enable_active_prefill_control
                 and next_num_prefill_tokens < min_meaningful_prefill_tokens
@@ -528,6 +539,7 @@ class OptSarathiScheduler(BaseScheduler):
             if not self.block_manager.can_allocate(seq):
                 break
 
+            # 检查活跃度控制上界
             current_active_prefill_cap = self._get_active_prefill_seq_cap(
                 decode_seq_count=len(scheduled_decode_seqs),
                 num_batched_tokens=num_batched_tokens,
@@ -626,6 +638,7 @@ class OptSarathiScheduler(BaseScheduler):
                 else:
                     break
 
+            # 检查最小有效分块
             if (
                 self.enable_active_prefill_control
                 and next_num_prefill_tokens < min_meaningful_prefill_tokens
