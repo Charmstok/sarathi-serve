@@ -50,7 +50,7 @@ metrics_config = MetricsConfig(
 )
 
 worker_config = WorkerConfig(
-    gpu_memory_utilization=0.6
+    gpu_memory_utilization=0.75
 )
 
 system_config = SystemConfig(

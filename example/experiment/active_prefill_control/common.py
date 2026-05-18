@@ -26,8 +26,8 @@ DATA_SOURCE = "dataset/ShareGPT_V3_unfiltered_cleaned_split.json"
 
 os.environ.setdefault("SARATHI_SAMPLING_BACKEND", "torch")
 
-PROMPTS_NUMBER = 240
-TARGET_TIME = 100
+PROMPTS_NUMBER = 1000
+TARGET_TIME = 30
 ARRIVAL_INTERVAL_S = 0.025
 CLUSTER_START_PCT = 0.10
 CLUSTER_END_PCT = 0.30
@@ -193,6 +193,7 @@ def run_experiment(enable_active_prefill_control: bool) -> str:
         enable_active_prefill_control=enable_active_prefill_control,
         max_active_prefill_seqs=MAX_ACTIVE_PREFILL_SEQS,
         min_active_prefill_chunk_size=MIN_ACTIVE_PREFILL_CHUNK_SIZE,
+        enable_active_prefill_control_stats_csv=True
     )
 
     metrics_config = MetricsConfig(

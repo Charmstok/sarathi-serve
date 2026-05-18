@@ -27,11 +27,11 @@ CJK_SERIF_FONT_CANDIDATES = [
     "Songti SC",
 ]
 
-CHINESE_FONT_SIZE = 10.5
-ENGLISH_FONT_SIZE = 10.5
-TITLE_FONT_SIZE = 10.5
-TICK_FONT_SIZE = 10.5
-LEGEND_FONT_SIZE = 10.5
+CHINESE_FONT_SIZE = 18
+ENGLISH_FONT_SIZE = 18
+TITLE_FONT_SIZE = 18
+TICK_FONT_SIZE = 18
+LEGEND_FONT_SIZE = 18
 
 SIMSUN_FONT_PATH = Path("/usr/share/fonts/truetype/simsun/SIMSUN.ttf")
 TIMES_NEW_ROMAN_FONT_PATH = Path(
@@ -185,7 +185,7 @@ def plot_latency(csv_path: Path, latency_values: list[float]) -> tuple[Path, Pat
             label="目标 ±5ms 区间",
         )
     set_axis_labels(ax, "批次序号", "执行时间（毫秒）")
-    set_title(ax, "批次执行时间散点图")
+    # set_title(ax, "批次执行时间散点图")
     ax.set_ylim(y_min, y_max)
     ax.set_yticks(range(int(y_min), int(y_max) + 1, 10))
     ax.grid(True, linestyle="--", alpha=0.4)

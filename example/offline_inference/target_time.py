@@ -13,7 +13,7 @@ BASE_OUTPUT_DIR = "./offline_inference_output"
 # 请求数
 PROMPTS_NUMBER = 1000
 # 时间预算
-TARGET_TIME = 110
+TARGET_TIME = 105
 # 请求到达系统的间隔时间
 ARRIVAL_INTERVAL_S = 0.1
 
@@ -44,7 +44,7 @@ scheduler_config = OptSarathiSchedulerConfig(
     max_num_seqs=256,
     enable_select_stats_csv=True,
     chunk_score_underfill_penalty=1.0,
-    chunk_score_overflow_penalty=2.5
+    chunk_score_overflow_penalty=3.0
 )
 
 metrics_config = MetricsConfig(
